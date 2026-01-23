@@ -1,0 +1,1088 @@
+"""
+Router para gestionar la base de datos de piezas del desguace
+"""
+from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
+from sqlalchemy.orm import Session
+from typing import Optional
+from datetime import datetime, timedelta
+import csv
+import io
+import json
+import logging
+
+from app.database import get_db
+from app.models.busqueda import Usuario, EntornoTrabajo, BaseDesguace, PiezaDesguace, PiezaVendida, FichadaPieza, VerificacionFichada
+from app.routers.auth import get_current_user
+from utils.timezone import now_spain_naive
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+# Campos disponibles para mapear
+CAMPOS_DISPONIBLES = [
+    {"id": "refid", "nombre": "Ref ID", "descripcion": "Referencia interna de la pieza"},
+    {"id": "oem", "nombre": "OEM", "descripcion": "Referencia del fabricante original"},
+    {"id": "oe", "nombre": "OE", "descripcion": "Referencia Original Equipment"},
+    {"id": "iam", "nombre": "IAM", "descripcion": "Referencia Independent Aftermarket"},
+    {"id": "precio", "nombre": "Precio", "descripcion": "Precio de venta"},
+    {"id": "ubicacion", "nombre": "Ubicación", "descripcion": "Ubicación en almacén"},
+    {"id": "observaciones", "nombre": "Observaciones", "descripcion": "Notas y observaciones"},
+    {"id": "articulo", "nombre": "Artículo", "descripcion": "Nombre del artículo"},
+    {"id": "marca", "nombre": "Marca", "descripcion": "Marca del vehículo"},
+    {"id": "modelo", "nombre": "Modelo", "descripcion": "Modelo del vehículo"},
+    {"id": "version", "nombre": "Versión", "descripcion": "Versión del vehículo"},
+    {"id": "imagen", "nombre": "Imagen", "descripcion": "URL de la imagen"},
+]
+
+# Palabras clave para auto-detectar columnas (campo -> lista de posibles nombres)
+KEYWORDS_MAPEO = {
+    "refid": ["refid", "ref_id", "referencia", "ref", "codigo", "code", "id", "sku", "reference"],
+    "oem": ["oem", "ref_oem", "refoem", "fabricante", "manufacturer"],
+    "oe": ["oe", "original", "original_equipment"],
+    "iam": ["iam", "aftermarket", "independent"],
+    "precio": ["precio", "price", "pvp", "coste", "cost", "importe", "valor", "euro", "eur"],
+    "ubicacion": ["ubicacion", "ubicación", "location", "almacen", "almacén", "estante", "posicion", "posición", "sitio"],
+    "observaciones": ["observaciones", "observacion", "notas", "nota", "comentario", "comentarios", "descripcion", "descripción", "description", "obs"],
+    "articulo": ["articulo", "artículo", "nombre", "name", "pieza", "producto", "product", "denominacion", "denominación", "titulo", "título"],
+    "marca": ["marca", "brand", "fabricante_vehiculo", "make"],
+    "modelo": ["modelo", "model", "vehiculo", "vehículo"],
+    "version": ["version", "versión", "variante", "motor", "motorización", "motorizacion", "año", "year"],
+    "imagen": ["imagen", "imagen1", "imagen_1", "image", "image1", "image_1", "foto", "foto1", "foto_1", "img", "img1", "img_1", "url_imagen", "picture", "photo"],
+}
+
+
+def detectar_mapeo_automatico(columnas_csv: list) -> dict:
+    """
+    Intenta detectar automáticamente qué columna del CSV corresponde a cada campo.
+    Devuelve un diccionario con el mapeo sugerido.
+    """
+    mapeo_sugerido = {}
+    columnas_usadas = set()
+    
+    # Normalizar columnas CSV para comparación
+    columnas_normalizadas = {col: col.lower().strip().replace(" ", "_").replace("-", "_") for col in columnas_csv}
+    
+    for campo_id, keywords in KEYWORDS_MAPEO.items():
+        mejor_match = None
+        
+        for col_original, col_normalizada in columnas_normalizadas.items():
+            if col_original in columnas_usadas:
+                continue
+                
+            # Buscar coincidencia exacta primero
+            if col_normalizada in keywords:
+                mejor_match = col_original
+                break
+            
+            # Buscar si alguna keyword está contenida en el nombre de la columna
+            for keyword in keywords:
+                if keyword in col_normalizada or col_normalizada in keyword:
+                    mejor_match = col_original
+                    break
+            
+            if mejor_match:
+                break
+        
+        if mejor_match:
+            mapeo_sugerido[campo_id] = mejor_match
+            columnas_usadas.add(mejor_match)
+        else:
+            mapeo_sugerido[campo_id] = ""
+    
+    return mapeo_sugerido
+
+
+def get_current_admin_or_higher(
+    usuario_actual: Usuario = Depends(get_current_user)
+) -> Usuario:
+    """Verificar que el usuario sea al menos admin"""
+    if usuario_actual.rol not in ["sysowner", "owner", "admin"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo administradores o superiores pueden gestionar la base de datos",
+        )
+    return usuario_actual
+
+
+@router.get("/campos")
+async def obtener_campos_disponibles():
+    """Obtener la lista de campos disponibles para mapear"""
+    return {"campos": CAMPOS_DISPONIBLES}
+
+
+@router.post("/analizar")
+async def analizar_csv(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_admin_or_higher)
+):
+    """
+    Analizar un CSV y devolver las columnas detectadas.
+    Este endpoint no guarda nada, solo lee las columnas del CSV.
+    """
+    try:
+        # Verificar que es un CSV
+        if not file.filename.endswith('.csv'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Solo se permiten archivos CSV",
+            )
+        
+        # Leer el contenido del archivo
+        content = await file.read()
+        
+        # Intentar decodificar con diferentes encodings
+        decoded_content = None
+        encoding_usado = None
+        for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+            try:
+                decoded_content = content.decode(encoding)
+                encoding_usado = encoding
+                break
+            except UnicodeDecodeError:
+                continue
+        
+        if decoded_content is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se pudo leer el archivo. Encoding no soportado.",
+            )
+        
+        # Detectar delimitador
+        primera_linea = decoded_content.split('\n')[0]
+        delimitador = ';' if ';' in primera_linea else ','
+        
+        # Parsear CSV
+        csv_reader = csv.DictReader(io.StringIO(decoded_content), delimiter=delimitador)
+        columnas = csv_reader.fieldnames
+        
+        if not columnas:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se pudieron detectar las columnas del CSV",
+            )
+        
+        # Contar filas
+        filas = list(csv_reader)
+        total_filas = len(filas)
+        
+        # Muestra de datos (primeras 3 filas)
+        muestra = []
+        for i, fila in enumerate(filas[:3]):
+            muestra.append({col: fila.get(col, '') for col in columnas})
+        
+        # Detectar mapeo automático
+        mapeo_sugerido = detectar_mapeo_automatico(list(columnas))
+        campos_detectados = sum(1 for v in mapeo_sugerido.values() if v)
+        
+        return {
+            "archivo": file.filename,
+            "encoding": encoding_usado,
+            "delimitador": delimitador,
+            "columnas": list(columnas),
+            "total_filas": total_filas,
+            "muestra": muestra,
+            "campos_disponibles": CAMPOS_DISPONIBLES,
+            "mapeo_sugerido": mapeo_sugerido,
+            "campos_detectados": campos_detectados,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error analizando CSV: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al analizar el archivo: {str(e)}",
+        )
+
+
+@router.post("/upload")
+async def subir_base_desguace(
+    file: UploadFile = File(...),
+    mapeo: str = Form(...),  # JSON con el mapeo de columnas
+    entorno_id: Optional[int] = Form(None),
+    formato_combinado: Optional[str] = Form(None),  # 'true' si OEM/OE/IAM están combinadas
+    columna_combinada: Optional[str] = Form(None),  # Nombre de la columna con formato OEM/OE/IAM
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_admin_or_higher)
+):
+    """
+    Subir un CSV con la base de datos de piezas del desguace.
+    Requiere un mapeo de columnas del CSV a los campos de la BD.
+    
+    Si formato_combinado='true' y columna_combinada está definida,
+    separa la columna por '/' asignando:
+    - Parte 1 -> OEM
+    - Parte 2 -> OE
+    - Parte 3 -> IAM (puede contener comas para múltiples referencias)
+    """
+    try:
+        # Parsear mapeo
+        try:
+            mapeo_dict = json.loads(mapeo)
+        except json.JSONDecodeError:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El mapeo de columnas no es válido",
+            )
+        
+        # Verificar si se usa formato combinado
+        usar_formato_combinado = formato_combinado == 'true' and columna_combinada
+        if usar_formato_combinado:
+            logger.info(f"Usando formato combinado OEM/OE/IAM desde columna: {columna_combinada}")
+        
+        # Determinar el entorno de trabajo
+        if usuario_actual.rol == "sysowner":
+            if not entorno_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Sysowner debe especificar el entorno_id",
+                )
+            target_entorno_id = entorno_id
+        else:
+            if not usuario_actual.entorno_trabajo_id:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Usuario no tiene entorno asignado",
+                )
+            target_entorno_id = usuario_actual.entorno_trabajo_id
+        
+        # Verificar que el entorno existe
+        entorno = db.query(EntornoTrabajo).filter(EntornoTrabajo.id == target_entorno_id).first()
+        if not entorno:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Entorno no encontrado",
+            )
+        
+        # Verificar que es un CSV
+        if not file.filename.endswith('.csv'):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Solo se permiten archivos CSV",
+            )
+        
+        # Leer el contenido del archivo
+        content = await file.read()
+        
+        # Intentar decodificar con diferentes encodings
+        decoded_content = None
+        for encoding in ['utf-8', 'latin-1', 'cp1252', 'iso-8859-1']:
+            try:
+                decoded_content = content.decode(encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        
+        if decoded_content is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se pudo leer el archivo. Encoding no soportado.",
+            )
+        
+        # Detectar delimitador
+        primera_linea = decoded_content.split('\n')[0]
+        delimitador = ';' if ';' in primera_linea else ','
+        
+        # Parsear CSV
+        csv_reader = csv.DictReader(io.StringIO(decoded_content), delimiter=delimitador)
+        columnas = csv_reader.fieldnames
+        
+        if not columnas:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No se pudieron detectar las columnas del CSV",
+            )
+        
+        # Leer todas las filas
+        filas = list(csv_reader)
+        
+        if len(filas) == 0:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="El CSV está vacío",
+            )
+        
+        # Obtener piezas anteriores para comparar
+        base_anterior = db.query(BaseDesguace).filter(
+            BaseDesguace.entorno_trabajo_id == target_entorno_id
+        ).first()
+        
+        piezas_anteriores = {}
+        archivo_origen = None
+        if base_anterior:
+            archivo_origen = base_anterior.nombre_archivo
+            # Guardar piezas anteriores indexadas por refid (o combinación única)
+            for p in base_anterior.piezas:
+                # Usar refid como clave principal, o combinación si no hay refid
+                clave = p.refid or f"{p.oem}_{p.articulo}_{p.marca}_{p.modelo}"
+                if clave:
+                    piezas_anteriores[clave] = p
+        
+        # Crear set de referencias del nuevo CSV
+        nuevas_referencias = set()
+        for fila in filas:
+            # Obtener la referencia según el mapeo
+            ref_columna = mapeo_dict.get("refid", "")
+            if ref_columna and ref_columna in fila:
+                ref_valor = fila[ref_columna].strip() if fila[ref_columna] else None
+                if ref_valor:
+                    nuevas_referencias.add(ref_valor)
+            else:
+                # Si se usa formato combinado, extraer OEM de la columna combinada
+                if usar_formato_combinado and columna_combinada in fila:
+                    valor_combinado = fila[columna_combinada].strip() if fila[columna_combinada] else ""
+                    if valor_combinado:
+                        partes = valor_combinado.split("/")
+                        oem = partes[0].strip() if len(partes) >= 1 else ""
+                        art_col = mapeo_dict.get("articulo", "")
+                        marca_col = mapeo_dict.get("marca", "")
+                        modelo_col = mapeo_dict.get("modelo", "")
+                        
+                        art = fila.get(art_col, "").strip() if art_col else ""
+                        marca = fila.get(marca_col, "").strip() if marca_col else ""
+                        modelo = fila.get(modelo_col, "").strip() if modelo_col else ""
+                        
+                        clave = f"{oem}_{art}_{marca}_{modelo}"
+                        if clave != "___":
+                            nuevas_referencias.add(clave)
+                else:
+                    # Si no hay refid ni formato combinado, usar combinación normal
+                    oem_col = mapeo_dict.get("oem", "")
+                    art_col = mapeo_dict.get("articulo", "")
+                    marca_col = mapeo_dict.get("marca", "")
+                    modelo_col = mapeo_dict.get("modelo", "")
+                    
+                    oem = fila.get(oem_col, "").strip() if oem_col else ""
+                    art = fila.get(art_col, "").strip() if art_col else ""
+                    marca = fila.get(marca_col, "").strip() if marca_col else ""
+                    modelo = fila.get(modelo_col, "").strip() if modelo_col else ""
+                    
+                    clave = f"{oem}_{art}_{marca}_{modelo}"
+                    if clave != "___":
+                        nuevas_referencias.add(clave)
+        
+        # Detectar piezas vendidas (estaban antes, ya no están)
+        piezas_vendidas_count = 0
+        for clave, pieza in piezas_anteriores.items():
+            if clave not in nuevas_referencias:
+                # Esta pieza se vendió - guardar en historial
+                pieza_vendida = PiezaVendida(
+                    entorno_trabajo_id=target_entorno_id,
+                    refid=pieza.refid,
+                    oem=pieza.oem,
+                    oe=pieza.oe,
+                    iam=pieza.iam,
+                    precio=pieza.precio,
+                    ubicacion=pieza.ubicacion,
+                    observaciones=pieza.observaciones,
+                    articulo=pieza.articulo,
+                    marca=pieza.marca,
+                    modelo=pieza.modelo,
+                    version=pieza.version,
+                    imagen=pieza.imagen,
+                    archivo_origen=archivo_origen,
+                )
+                db.add(pieza_vendida)
+                piezas_vendidas_count += 1
+        
+        # Eliminar base de datos anterior
+        if base_anterior:
+            db.delete(base_anterior)
+            db.flush()
+        
+        # Crear nueva base de datos
+        nueva_base = BaseDesguace(
+            entorno_trabajo_id=target_entorno_id,
+            nombre_archivo=file.filename,
+            total_piezas=len(filas),
+            columnas=",".join(columnas),
+            mapeo_columnas=json.dumps(mapeo_dict),
+            subido_por_id=usuario_actual.id,
+        )
+        db.add(nueva_base)
+        db.flush()  # Obtener ID
+        
+        # Insertar piezas usando el mapeo
+        piezas_insertadas = 0
+        for fila in filas:
+            try:
+                pieza_data = {
+                    "base_desguace_id": nueva_base.id,
+                }
+                
+                # Si se usa formato combinado, procesar primero la columna combinada
+                if usar_formato_combinado and columna_combinada in fila:
+                    valor_combinado = fila[columna_combinada].strip() if fila[columna_combinada] else ""
+                    if valor_combinado:
+                        # Separar por "/" para obtener OEM/OE/IAM
+                        partes = valor_combinado.split("/")
+                        if len(partes) >= 1:
+                            pieza_data["oem"] = partes[0].strip() if partes[0].strip() else None
+                        if len(partes) >= 2:
+                            pieza_data["oe"] = partes[1].strip() if partes[1].strip() else None
+                        if len(partes) >= 3:
+                            # IAM puede tener múltiples valores separados por coma o más "/"
+                            # Unimos todo lo que queda después del segundo "/"
+                            iam_completo = "/".join(partes[2:]).strip()
+                            pieza_data["iam"] = iam_completo if iam_completo else None
+                
+                # Aplicar mapeo normal para los demás campos
+                for campo, columna_csv in mapeo_dict.items():
+                    # Si usamos formato combinado, NO sobrescribir oem, oe, iam
+                    if usar_formato_combinado and campo in ["oem", "oe", "iam"]:
+                        continue
+                    
+                    if columna_csv and columna_csv in fila:
+                        valor = fila[columna_csv].strip() if fila[columna_csv] else None
+                        
+                        # Convertir precio a float
+                        if campo == "precio" and valor:
+                            try:
+                                valor = float(valor.replace(',', '.').replace('€', '').replace('$', '').strip())
+                            except:
+                                valor = None
+                        
+                        pieza_data[campo] = valor
+                
+                # Crear pieza
+                pieza = PiezaDesguace(**pieza_data)
+                db.add(pieza)
+                piezas_insertadas += 1
+                
+            except Exception as e:
+                logger.warning(f"Error procesando fila: {e}")
+                continue
+        
+        # ============ VERIFICAR FICHADAS Y GUARDAR EN TABLA SEPARADA ============
+        # Buscar TODAS las fichadas de este entorno (no solo las pendientes)
+        todas_fichadas = db.query(FichadaPieza).filter(
+            FichadaPieza.entorno_trabajo_id == target_entorno_id
+        ).all()
+        
+        # Convertir nuevas_referencias a set de mayúsculas para búsqueda rápida
+        referencias_upper = {ref.upper() for ref in nuevas_referencias if ref}
+        
+        fichadas_verificadas = 0
+        fichadas_encontradas = 0
+        
+        for fichada in todas_fichadas:
+            # Buscar si la pieza está en el nuevo stock
+            pieza_encontrada = fichada.id_pieza.strip().upper() in referencias_upper
+            
+            # Crear registro de verificación en tabla separada
+            verificacion = VerificacionFichada(
+                fichada_id=fichada.id,
+                usuario_id=fichada.usuario_id,
+                entorno_trabajo_id=fichada.entorno_trabajo_id,
+                id_pieza=fichada.id_pieza,
+                hora_fichada=fichada.fecha_fichada,
+                en_stock=pieza_encontrada,
+            )
+            db.add(verificacion)
+            
+            fichadas_verificadas += 1
+            if pieza_encontrada:
+                fichadas_encontradas += 1
+        
+        db.commit()
+        
+        logger.info(f"Base de desguace subida: {file.filename} ({piezas_insertadas} piezas, {piezas_vendidas_count} vendidas, {fichadas_verificadas} fichadas verificadas, {fichadas_encontradas} encontradas) por {usuario_actual.email}" + (f" [Formato combinado: {columna_combinada}]" if usar_formato_combinado else ""))
+        
+        return {
+            "message": "Base de datos subida correctamente",
+            "archivo": file.filename,
+            "piezas_insertadas": piezas_insertadas,
+            "piezas_vendidas": piezas_vendidas_count,
+            "fichadas_verificadas": fichadas_verificadas,
+            "fichadas_encontradas": fichadas_encontradas,
+            "columnas_csv": list(columnas),
+            "mapeo_aplicado": mapeo_dict,
+            "formato_combinado": usar_formato_combinado,
+            "columna_combinada": columna_combinada if usar_formato_combinado else None,
+            "entorno": entorno.nombre,
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error subiendo base de desguace: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error al procesar el archivo: {str(e)}",
+        )
+
+
+@router.get("/info")
+async def obtener_info_base(
+    entorno_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_user)
+):
+    """Obtener información de la base de datos del desguace del entorno"""
+    try:
+        # Determinar entorno
+        if usuario_actual.rol == "sysowner" and entorno_id:
+            target_entorno_id = entorno_id
+        else:
+            target_entorno_id = usuario_actual.entorno_trabajo_id
+        
+        if not target_entorno_id:
+            return {"tiene_base": False, "mensaje": "No hay entorno asignado"}
+        
+        base = db.query(BaseDesguace).filter(
+            BaseDesguace.entorno_trabajo_id == target_entorno_id
+        ).first()
+        
+        if not base:
+            return {"tiene_base": False}
+        
+        # Obtener usuario que subió
+        subido_por = db.query(Usuario).filter(Usuario.id == base.subido_por_id).first()
+        
+        # Parsear mapeo
+        mapeo = {}
+        if base.mapeo_columnas:
+            try:
+                mapeo = json.loads(base.mapeo_columnas)
+            except:
+                pass
+        
+        return {
+            "tiene_base": True,
+            "id": base.id,
+            "nombre_archivo": base.nombre_archivo,
+            "total_piezas": base.total_piezas,
+            "columnas": base.columnas.split(",") if base.columnas else [],
+            "mapeo_columnas": mapeo,
+            "subido_por": subido_por.email if subido_por else "Desconocido",
+            "fecha_subida": base.fecha_subida.isoformat() if base.fecha_subida else None,
+            "fecha_actualizacion": base.fecha_actualizacion.isoformat() if base.fecha_actualizacion else None,
+        }
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo info base: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al obtener información",
+        )
+
+
+@router.delete("/eliminar")
+async def eliminar_base_desguace(
+    entorno_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_admin_or_higher)
+):
+    """Eliminar la base de datos del desguace"""
+    try:
+        # Determinar entorno
+        if usuario_actual.rol == "sysowner" and entorno_id:
+            target_entorno_id = entorno_id
+        else:
+            target_entorno_id = usuario_actual.entorno_trabajo_id
+        
+        if not target_entorno_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No hay entorno especificado",
+            )
+        
+        base = db.query(BaseDesguace).filter(
+            BaseDesguace.entorno_trabajo_id == target_entorno_id
+        ).first()
+        
+        if not base:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No existe base de datos para este entorno",
+            )
+        
+        nombre = base.nombre_archivo
+        db.delete(base)
+        db.commit()
+        
+        logger.info(f"Base de desguace eliminada: {nombre} por {usuario_actual.email}")
+        
+        return {"message": f"Base de datos '{nombre}' eliminada correctamente"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error eliminando base: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al eliminar base de datos",
+        )
+
+
+@router.get("/buscar")
+async def buscar_pieza(
+    referencia: str,
+    entorno_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_user)
+):
+    """Buscar una pieza en la base de datos del desguace"""
+    try:
+        # Determinar entorno
+        if usuario_actual.rol == "sysowner" and entorno_id:
+            target_entorno_id = entorno_id
+        else:
+            target_entorno_id = usuario_actual.entorno_trabajo_id
+        
+        if not target_entorno_id:
+            return {"encontrado": False, "mensaje": "No hay entorno asignado"}
+        
+        # Buscar base
+        base = db.query(BaseDesguace).filter(
+            BaseDesguace.entorno_trabajo_id == target_entorno_id
+        ).first()
+        
+        if not base:
+            return {"encontrado": False, "mensaje": "No hay base de datos cargada"}
+        
+        # Buscar pieza por refid, oem, oe o iam
+        piezas = db.query(PiezaDesguace).filter(
+            PiezaDesguace.base_desguace_id == base.id,
+            (PiezaDesguace.refid.ilike(f"%{referencia}%")) |
+            (PiezaDesguace.oem.ilike(f"%{referencia}%")) |
+            (PiezaDesguace.oe.ilike(f"%{referencia}%")) |
+            (PiezaDesguace.iam.ilike(f"%{referencia}%"))
+        ).limit(50).all()
+        
+        if not piezas:
+            return {"encontrado": False, "resultados": []}
+        
+        resultados = []
+        for p in piezas:
+            resultado = {
+                "id": p.id,
+                "refid": p.refid,
+                "oem": p.oem,
+                "oe": p.oe,
+                "iam": p.iam,
+                "precio": p.precio,
+                "ubicacion": p.ubicacion,
+                "observaciones": p.observaciones,
+                "articulo": p.articulo,
+                "marca": p.marca,
+                "modelo": p.modelo,
+                "version": p.version,
+                "imagen": p.imagen,
+            }
+            resultados.append(resultado)
+        
+        return {
+            "encontrado": True,
+            "total": len(resultados),
+            "resultados": resultados,
+        }
+        
+    except Exception as e:
+        logger.error(f"Error buscando pieza: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error en la búsqueda",
+        )
+
+
+# ============== HISTORIAL DE VENTAS ==============
+
+@router.get("/ventas")
+async def obtener_ventas(
+    entorno_id: Optional[int] = None,
+    busqueda: Optional[str] = None,
+    fecha_desde: Optional[str] = None,
+    fecha_hasta: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_user)
+):
+    """Obtener historial de piezas vendidas con búsqueda opcional"""
+    try:
+        from datetime import datetime
+        from sqlalchemy import or_
+        
+        # Determinar entorno
+        if usuario_actual.rol == "sysowner" and entorno_id:
+            target_entorno_id = entorno_id
+        else:
+            target_entorno_id = usuario_actual.entorno_trabajo_id
+        
+        if not target_entorno_id:
+            return {"ventas": [], "total": 0, "mensaje": "No hay entorno asignado"}
+        
+        # Query base
+        query = db.query(PiezaVendida).filter(
+            PiezaVendida.entorno_trabajo_id == target_entorno_id
+        )
+        
+        # Filtro por búsqueda (refid, oem, oe, iam, articulo)
+        if busqueda and busqueda.strip():
+            termino = f"%{busqueda.strip()}%"
+            query = query.filter(
+                or_(
+                    PiezaVendida.refid.ilike(termino),
+                    PiezaVendida.oem.ilike(termino),
+                    PiezaVendida.oe.ilike(termino),
+                    PiezaVendida.iam.ilike(termino),
+                    PiezaVendida.articulo.ilike(termino),
+                    PiezaVendida.marca.ilike(termino),
+                    PiezaVendida.modelo.ilike(termino),
+                )
+            )
+        
+        # Filtro por fechas
+        if fecha_desde:
+            try:
+                desde = datetime.fromisoformat(fecha_desde.replace('Z', '+00:00'))
+                query = query.filter(PiezaVendida.fecha_venta >= desde)
+            except:
+                pass
+        
+        if fecha_hasta:
+            try:
+                hasta = datetime.fromisoformat(fecha_hasta.replace('Z', '+00:00'))
+                # Añadir 1 día para hacer el filtro inclusivo (hasta el final del día)
+                from datetime import timedelta
+                hasta = hasta + timedelta(days=1)
+                query = query.filter(PiezaVendida.fecha_venta < hasta)
+            except:
+                pass
+        
+        # Contar total
+        total = query.count()
+        
+        # Ordenar por fecha de venta (más recientes primero) y paginar
+        ventas = query.order_by(PiezaVendida.fecha_venta.desc()).offset(offset).limit(limit).all()
+        
+        resultados = []
+        for v in ventas:
+            resultados.append({
+                "id": v.id,
+                "refid": v.refid,
+                "oem": v.oem,
+                "oe": v.oe,
+                "iam": v.iam,
+                "precio": v.precio,
+                "ubicacion": v.ubicacion,
+                "observaciones": v.observaciones,
+                "articulo": v.articulo,
+                "marca": v.marca,
+                "modelo": v.modelo,
+                "version": v.version,
+                "imagen": v.imagen,
+                "fecha_venta": v.fecha_venta.isoformat() if v.fecha_venta else None,
+                "archivo_origen": v.archivo_origen,
+            })
+        
+        return {
+            "ventas": resultados,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo ventas: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al obtener historial de ventas",
+        )
+
+
+@router.get("/ventas/resumen")
+async def resumen_ventas(
+    entorno_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_user)
+):
+    """Obtener resumen de ventas (total, por día, ingresos) - Solo sysowner y owner"""
+    # Solo sysowner y owner pueden ver ingresos
+    if usuario_actual.rol not in ["sysowner", "owner"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Solo propietarios pueden ver el resumen de ingresos",
+        )
+    try:
+        from datetime import datetime, timedelta
+        from sqlalchemy import func
+        
+        # Determinar entorno
+        if usuario_actual.rol == "sysowner" and entorno_id:
+            target_entorno_id = entorno_id
+        else:
+            target_entorno_id = usuario_actual.entorno_trabajo_id
+        
+        if not target_entorno_id:
+            return {"mensaje": "No hay entorno asignado"}
+        
+        # Total de piezas vendidas
+        total_vendidas = db.query(PiezaVendida).filter(
+            PiezaVendida.entorno_trabajo_id == target_entorno_id
+        ).count()
+        
+        # Ingresos totales (suma de precios)
+        ingresos_totales = db.query(func.sum(PiezaVendida.precio)).filter(
+            PiezaVendida.entorno_trabajo_id == target_entorno_id
+        ).scalar() or 0
+        
+        # Ventas últimos 7 días
+        hace_7_dias = now_spain_naive() - timedelta(days=7)
+        ventas_7_dias = db.query(PiezaVendida).filter(
+            PiezaVendida.entorno_trabajo_id == target_entorno_id,
+            PiezaVendida.fecha_venta >= hace_7_dias
+        ).count()
+        
+        ingresos_7_dias = db.query(func.sum(PiezaVendida.precio)).filter(
+            PiezaVendida.entorno_trabajo_id == target_entorno_id,
+            PiezaVendida.fecha_venta >= hace_7_dias
+        ).scalar() or 0
+        
+        # Ventas últimos 30 días
+        hace_30_dias = now_spain_naive() - timedelta(days=30)
+        ventas_30_dias = db.query(PiezaVendida).filter(
+            PiezaVendida.entorno_trabajo_id == target_entorno_id,
+            PiezaVendida.fecha_venta >= hace_30_dias
+        ).count()
+        
+        ingresos_30_dias = db.query(func.sum(PiezaVendida.precio)).filter(
+            PiezaVendida.entorno_trabajo_id == target_entorno_id,
+            PiezaVendida.fecha_venta >= hace_30_dias
+        ).scalar() or 0
+        
+        return {
+            "total_vendidas": total_vendidas,
+            "ingresos_totales": round(ingresos_totales, 2),
+            "ventas_7_dias": ventas_7_dias,
+            "ingresos_7_dias": round(ingresos_7_dias, 2),
+            "ventas_30_dias": ventas_30_dias,
+            "ingresos_30_dias": round(ingresos_30_dias, 2),
+        }
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo resumen ventas: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al obtener resumen",
+        )
+
+
+@router.delete("/ventas/{venta_id}")
+async def eliminar_venta(
+    venta_id: int,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_admin_or_higher)
+):
+    """Eliminar un registro de venta del historial"""
+    try:
+        venta = db.query(PiezaVendida).filter(PiezaVendida.id == venta_id).first()
+        
+        if not venta:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Venta no encontrada",
+            )
+        
+        # Verificar permisos
+        if usuario_actual.rol != "sysowner" and venta.entorno_trabajo_id != usuario_actual.entorno_trabajo_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No tienes permisos para eliminar esta venta",
+            )
+        
+        db.delete(venta)
+        db.commit()
+        
+        return {"message": "Registro de venta eliminado"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error eliminando venta: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al eliminar venta",
+        )
+
+
+# ============== STOCK (PIEZAS EN INVENTARIO) ==============
+
+@router.get("/stock")
+async def obtener_stock(
+    entorno_id: Optional[int] = None,
+    busqueda: Optional[str] = None,
+    limit: int = 100,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_user)
+):
+    """Obtener piezas en stock con búsqueda opcional"""
+    try:
+        from sqlalchemy import or_
+        
+        # Determinar entorno
+        if usuario_actual.rol == "sysowner" and entorno_id:
+            target_entorno_id = entorno_id
+        else:
+            target_entorno_id = usuario_actual.entorno_trabajo_id
+        
+        if not target_entorno_id:
+            return {"piezas": [], "total": 0, "mensaje": "No hay entorno asignado"}
+        
+        # Buscar base del entorno
+        base = db.query(BaseDesguace).filter(
+            BaseDesguace.entorno_trabajo_id == target_entorno_id
+        ).first()
+        
+        if not base:
+            return {"piezas": [], "total": 0, "mensaje": "No hay base de datos cargada"}
+        
+        # Query base
+        query = db.query(PiezaDesguace).filter(
+            PiezaDesguace.base_desguace_id == base.id
+        )
+        
+        # Filtro por búsqueda (refid, oem, oe, iam, articulo, marca, modelo)
+        if busqueda and busqueda.strip():
+            termino = f"%{busqueda.strip()}%"
+            query = query.filter(
+                or_(
+                    PiezaDesguace.refid.ilike(termino),
+                    PiezaDesguace.oem.ilike(termino),
+                    PiezaDesguace.oe.ilike(termino),
+                    PiezaDesguace.iam.ilike(termino),
+                    PiezaDesguace.articulo.ilike(termino),
+                    PiezaDesguace.marca.ilike(termino),
+                    PiezaDesguace.modelo.ilike(termino),
+                )
+            )
+        
+        # Contar total
+        total = query.count()
+        
+        # Ordenar y paginar
+        piezas = query.order_by(PiezaDesguace.id.desc()).offset(offset).limit(limit).all()
+        
+        resultados = []
+        for p in piezas:
+            resultados.append({
+                "id": p.id,
+                "refid": p.refid,
+                "oem": p.oem,
+                "oe": p.oe,
+                "iam": p.iam,
+                "precio": p.precio,
+                "ubicacion": p.ubicacion,
+                "observaciones": p.observaciones,
+                "articulo": p.articulo,
+                "marca": p.marca,
+                "modelo": p.modelo,
+                "version": p.version,
+                "imagen": p.imagen,
+                "fecha_creacion": p.fecha_creacion.isoformat() if p.fecha_creacion else None,
+            })
+        
+        return {
+            "piezas": resultados,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+        }
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo stock: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al obtener stock",
+        )
+
+
+@router.get("/stock/resumen")
+async def resumen_stock(
+    entorno_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_user)
+):
+    """Obtener resumen del stock (total piezas, valor total) - Solo sysowner y owner pueden ver valores"""
+    try:
+        from sqlalchemy import func
+        
+        # Determinar entorno
+        if usuario_actual.rol == "sysowner" and entorno_id:
+            target_entorno_id = entorno_id
+        else:
+            target_entorno_id = usuario_actual.entorno_trabajo_id
+        
+        if not target_entorno_id:
+            return {"mensaje": "No hay entorno asignado"}
+        
+        # Buscar base del entorno
+        base = db.query(BaseDesguace).filter(
+            BaseDesguace.entorno_trabajo_id == target_entorno_id
+        ).first()
+        
+        if not base:
+            return {
+                "tiene_base": False,
+                "total_piezas": 0,
+                "valor_total": 0,
+                "piezas_con_precio": 0,
+                "precio_medio": 0,
+            }
+        
+        # Solo sysowner y owner pueden ver valores económicos
+        puede_ver_valores = usuario_actual.rol in ["sysowner", "owner"]
+        
+        # Total de piezas en stock
+        total_piezas = db.query(PiezaDesguace).filter(
+            PiezaDesguace.base_desguace_id == base.id
+        ).count()
+        
+        # Piezas con precio
+        piezas_con_precio = db.query(PiezaDesguace).filter(
+            PiezaDesguace.base_desguace_id == base.id,
+            PiezaDesguace.precio.isnot(None),
+            PiezaDesguace.precio > 0
+        ).count()
+        
+        if puede_ver_valores:
+            # Valor total del inventario (suma de precios)
+            valor_total = db.query(func.sum(PiezaDesguace.precio)).filter(
+                PiezaDesguace.base_desguace_id == base.id
+            ).scalar() or 0
+            
+            # Precio medio
+            precio_medio = db.query(func.avg(PiezaDesguace.precio)).filter(
+                PiezaDesguace.base_desguace_id == base.id,
+                PiezaDesguace.precio.isnot(None),
+                PiezaDesguace.precio > 0
+            ).scalar() or 0
+        else:
+            valor_total = None
+            precio_medio = None
+        
+        return {
+            "tiene_base": True,
+            "nombre_archivo": base.nombre_archivo,
+            "fecha_subida": base.fecha_subida.isoformat() if base.fecha_subida else None,
+            "total_piezas": total_piezas,
+            "piezas_con_precio": piezas_con_precio,
+            "valor_total": round(valor_total, 2) if valor_total is not None else None,
+            "precio_medio": round(precio_medio, 2) if precio_medio is not None else None,
+            "puede_ver_valores": puede_ver_valores,
+        }
+        
+    except Exception as e:
+        logger.error(f"Error obteniendo resumen stock: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al obtener resumen",
+        )

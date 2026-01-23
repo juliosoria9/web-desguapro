@@ -1,0 +1,44 @@
+# Dependencias
+node_modules/
+frontend/node_modules/
+backend/venv/
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+
+# Bases de datos (grandes)
+*.db
+backend/*.db
+*.db-journal
+
+# Backups
+backup_*.db
+
+# Next.js build
+frontend/.next/
+frontend/out/
+
+# Archivos de entorno
+.env
+.env.local
+.env.production
+backend/.env
+frontend/.env.local
+
+# Logs
+*.log
+npm-debug.log*
+
+# IDEs
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Cache
+.cache/
+*.cache
