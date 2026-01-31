@@ -256,6 +256,24 @@ export default function VerificarPiezasPage() {
   const piezasPedidasLista = piezasAComprarTodas.filter(p => piezasPedidas.has(p.referencia));
   const piezasOk = filtrarPiezas(resultados.filter(p => !p.necesita_comprar && p.encontrada));
 
+  // Contar piezas por OEM para mostrar en burbuja
+  const contadorPorOem = React.useMemo(() => {
+    const contador: Record<string, number> = {};
+    resultados.forEach(p => {
+      if (p.oe && p.oe.trim()) {
+        const oe = p.oe.trim().toLowerCase();
+        contador[oe] = (contador[oe] || 0) + 1;
+      }
+    });
+    return contador;
+  }, [resultados]);
+
+  // Función para obtener cantidad de piezas con mismo OEM
+  const getCantidadMismoOem = (pieza: PiezaVerificacion): number => {
+    if (!pieza.oe || !pieza.oe.trim()) return 0;
+    return contadorPorOem[pieza.oe.trim().toLowerCase()] || 0;
+  };
+
   const exportarCompras = () => {
     if (piezasAComprar.length === 0) return;
     const csv = [
@@ -834,9 +852,9 @@ export default function VerificarPiezasPage() {
                               {pieza.imagen ? (
                                 <div className="relative w-12 h-12 cursor-pointer group" onClick={() => abrirGaleria(pieza.imagen)}>
                                   <img src={pieza.imagen.split(',')[0].trim()} alt="" className="w-12 h-12 object-cover rounded group-hover:opacity-80" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
-                                  {pieza.imagen.includes(',') && (
-                                    <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
-                                      {pieza.imagen.split(',').length}
+                                  {getCantidadMismoOem(pieza) > 1 && (
+                                    <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium" title={`${getCantidadMismoOem(pieza)} piezas con OEM: ${pieza.oe}`}>
+                                      {getCantidadMismoOem(pieza)}
                                     </span>
                                   )}
                                 </div>
@@ -944,9 +962,9 @@ export default function VerificarPiezasPage() {
                               {pieza.imagen ? (
                                 <div className="relative w-12 h-12 cursor-pointer group" onClick={() => abrirGaleria(pieza.imagen)}>
                                   <img src={pieza.imagen.split(',')[0].trim()} alt="" className="w-12 h-12 object-cover rounded group-hover:opacity-80" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
-                                  {pieza.imagen.includes(',') && (
-                                    <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
-                                      {pieza.imagen.split(',').length}
+                                  {getCantidadMismoOem(pieza) > 1 && (
+                                    <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium" title={`${getCantidadMismoOem(pieza)} piezas con OEM: ${pieza.oe}`}>
+                                      {getCantidadMismoOem(pieza)}
                                     </span>
                                   )}
                                 </div>

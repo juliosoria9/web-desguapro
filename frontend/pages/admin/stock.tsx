@@ -144,6 +144,24 @@ export default function StockPage() {
     return imagenStr.split(',').map(url => url.trim()).filter(url => url.length > 0);
   };
 
+  // Contar piezas por OEM para mostrar en burbuja
+  const contadorPorOem = React.useMemo(() => {
+    const contador: Record<string, number> = {};
+    piezas.forEach(p => {
+      if (p.oem && p.oem.trim()) {
+        const oem = p.oem.trim().toLowerCase();
+        contador[oem] = (contador[oem] || 0) + 1;
+      }
+    });
+    return contador;
+  }, [piezas]);
+
+  // Función para obtener cantidad de piezas con mismo OEM
+  const getCantidadMismoOem = (pieza: PiezaStock): number => {
+    if (!pieza.oem || !pieza.oem.trim()) return 0;
+    return contadorPorOem[pieza.oem.trim().toLowerCase()] || 0;
+  };
+
   // Calcular suma de precios de las piezas mostradas
   const sumaPreciosPiezas = piezas.reduce((acc, p) => acc + (p.precio || 0), 0);
 
@@ -598,9 +616,9 @@ export default function StockPage() {
                                     className="w-12 h-12 object-cover rounded-lg border border-gray-200"
                                     onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                                   />
-                                  {imagenes.length > 1 && (
-                                    <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
-                                      +{imagenes.length - 1}
+                                  {getCantidadMismoOem(pieza) > 1 && (
+                                    <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold" title={`${getCantidadMismoOem(pieza)} piezas con OEM: ${pieza.oem}`}>
+                                      {getCantidadMismoOem(pieza)}
                                     </span>
                                   )}
                                 </div>
