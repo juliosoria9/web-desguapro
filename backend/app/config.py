@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     cors_origins: List[str] = [
         "http://localhost:3000",
         "http://localhost",
+        "https://desguapro.com",
+        "https://www.desguapro.com",
     ]
     
     # Logging
