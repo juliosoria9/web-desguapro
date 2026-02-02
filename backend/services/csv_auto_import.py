@@ -367,6 +367,7 @@ def importar_csv_motocoche(csv_path: str = CSV_PATH) -> Dict:
         
         # Actualizar metadatos de la base
         base.total_piezas = len(nuevos_refids)
+        base.fecha_subida = now_spain_naive()  # Actualizar fecha de última subida (incluso automática)
         base.fecha_actualizacion = now_spain_naive()
         base.nombre_archivo = "StockSeinto.csv (auto)"
         
