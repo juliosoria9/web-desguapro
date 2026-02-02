@@ -10,7 +10,7 @@ from datetime import datetime, date, timedelta
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models.busqueda import FichadaPieza, Usuario, EntornoTrabajo, VerificacionFichada
+from app.models.busqueda import FichadaPieza, Usuario, EntornoTrabajo, VerificacionFichada, PiezaDesguace, BaseDesguace
 from services.audit import AuditService
 
 router = APIRouter(tags=["fichadas"])
@@ -44,6 +44,10 @@ class FichadaDetalle(BaseModel):
     minutos_desde_anterior: Optional[int]
     color: str  # green, yellow, orange, red según tiempo
     en_stock: Optional[bool] = None  # None=no verificado, True=entró, False=no entró
+    imagen: Optional[str] = None  # URL de imagen de la pieza si está en stock
+    articulo: Optional[str] = None  # Tipo de pieza (ej: "Motor", "Faro")
+    marca: Optional[str] = None  # Marca del vehículo
+    modelo: Optional[str] = None  # Modelo del vehículo
 
 
 class ResumenUsuarioDia(BaseModel):
@@ -296,6 +300,26 @@ async def obtener_detalle_usuario(
         func.date(FichadaPieza.fecha_fichada) == fecha_filtro.strftime("%Y-%m-%d")
     ).order_by(FichadaPieza.fecha_fichada).all()
     
+    # Obtener base de datos del entorno para buscar imágenes
+    base = db.query(BaseDesguace).filter(
+        BaseDesguace.entorno_trabajo_id == target_entorno_id
+    ).first()
+    
+    # Crear diccionario de datos de piezas por refid para búsqueda rápida
+    datos_piezas_por_refid = {}
+    if base:
+        piezas = db.query(PiezaDesguace).filter(
+            PiezaDesguace.base_desguace_id == base.id
+        ).all()
+        for pieza in piezas:
+            if pieza.refid:
+                datos_piezas_por_refid[pieza.refid.strip().upper()] = {
+                    'imagen': pieza.imagen,
+                    'articulo': pieza.articulo,
+                    'marca': pieza.marca,
+                    'modelo': pieza.modelo
+                }
+    
     detalles = []
     anterior = None
     
@@ -314,6 +338,20 @@ async def obtener_detalle_usuario(
         
         en_stock = ultima_verificacion.en_stock if ultima_verificacion else None
         
+        # Buscar datos de la pieza
+        imagen_pieza = None
+        articulo_pieza = None
+        marca_pieza = None
+        modelo_pieza = None
+        if en_stock:
+            refid_upper = fichada.id_pieza.strip().upper()
+            datos_pieza = datos_piezas_por_refid.get(refid_upper)
+            if datos_pieza:
+                imagen_pieza = datos_pieza.get('imagen')
+                articulo_pieza = datos_pieza.get('articulo')
+                marca_pieza = datos_pieza.get('marca')
+                modelo_pieza = datos_pieza.get('modelo')
+        
         detalles.append(FichadaDetalle(
             id=fichada.id,
             id_pieza=fichada.id_pieza,
@@ -322,7 +360,11 @@ async def obtener_detalle_usuario(
             hora=fichada.fecha_fichada.strftime("%H:%M:%S"),
             minutos_desde_anterior=minutos_desde_anterior,
             color=color,
-            en_stock=en_stock
+            en_stock=en_stock,
+            imagen=imagen_pieza,
+            articulo=articulo_pieza,
+            marca=marca_pieza,
+            modelo=modelo_pieza
         ))
         
         anterior = fichada.fecha_fichada

@@ -15,6 +15,27 @@ interface FichadaDetalle {
   minutos_desde_anterior: number | null;
   color: string;
   en_stock: boolean | null;  // null=no verificado, true=entró, false=no entró
+  imagen: string | null;  // URL de imagen de la pieza
+  articulo: string | null;  // Tipo de pieza
+  marca: string | null;  // Marca del vehículo
+  modelo: string | null;  // Modelo del vehículo
+}
+
+// Interface para pieza de stock (para el modal de detalle)
+interface PiezaStock {
+  id: number;
+  refid: string | null;
+  oem: string | null;
+  oe: string | null;
+  iam: string | null;
+  precio: number | null;
+  ubicacion: string | null;
+  observaciones: string | null;
+  articulo: string | null;
+  marca: string | null;
+  modelo: string | null;
+  version: string | null;
+  imagen: string | null;
 }
 
 interface MiFichada {
@@ -106,6 +127,10 @@ export default function FichadasPage() {
   const [editandoDescripcion, setEditandoDescripcion] = useState<number | null>(null);
   const [descripcionTemp, setDescripcionTemp] = useState<string>('');
   const [guardandoDescripcion, setGuardandoDescripcion] = useState(false);
+
+  // Estado para modal de detalle de pieza
+  const [piezaDetalle, setPiezaDetalle] = useState<PiezaStock | null>(null);
+  const [cargandoPieza, setCargandoPieza] = useState(false);
 
   const esAdmin = user?.rol && ['admin', 'owner', 'sysowner'].includes(user.rol);
   const esSysowner = user?.rol === 'sysowner';
@@ -379,6 +404,53 @@ export default function FichadasPage() {
     return fechaStr.startsWith(hoy);
   };
 
+  // Función para buscar pieza en stock por refid
+  const buscarPiezaEnStock = async (idPieza: string) => {
+    setCargandoPieza(true);
+    try {
+      // Para sysowner, incluir el entorno seleccionado para buscar en la base correcta
+      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/stock?busqueda=${encodeURIComponent(idPieza)}&limit=10`;
+      if (esSysowner && selectedEmpresa) {
+        url += `&entorno_id=${selectedEmpresa}`;
+      }
+      
+      const response = await axios.get(url, { withCredentials: true });
+      
+      if (response.data.piezas && response.data.piezas.length > 0) {
+        // Buscar coincidencia exacta por refid (prioridad) o por OEM
+        const piezaExacta = response.data.piezas.find(
+          (p: PiezaStock) => p.refid === idPieza
+        ) || response.data.piezas.find(
+          (p: PiezaStock) => p.oem === idPieza
+        );
+        if (piezaExacta) {
+          setPiezaDetalle(piezaExacta);
+        } else {
+          setPiezaDetalle(response.data.piezas[0]);
+        }
+      } else {
+        toast.error('Pieza no encontrada en stock');
+      }
+    } catch (error: any) {
+      console.error('Error buscando pieza:', error);
+      toast.error('Error al buscar pieza en stock');
+    } finally {
+      setCargandoPieza(false);
+    }
+  };
+
+  // Función para obtener array de imágenes desde string separado por comas
+  const getImagenes = (imagenStr: string | null): string[] => {
+    if (!imagenStr) return [];
+    return imagenStr.split(',').map(url => url.trim()).filter(url => url.length > 0);
+  };
+
+  // Formatear moneda
+  const formatCurrency = (value: number | null) => {
+    if (value === null || value === undefined) return '-';
+    return new Intl.NumberFormat('es-ES', { style: 'currency', currency: 'EUR' }).format(value);
+  };
+
   const handleLogout = async () => {
     await logout();
     router.push('/login');
@@ -541,7 +613,13 @@ export default function FichadasPage() {
                           <div className="col-span-2 font-mono text-xs text-gray-600">
                             {new Date(fichada.fecha_fichada).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
                           </div>
-                          <div className="col-span-3 font-mono font-medium text-gray-900 text-sm">{fichada.id_pieza}</div>
+                          <div 
+                            className="col-span-3 font-mono font-medium text-blue-600 text-sm cursor-pointer hover:text-blue-800 hover:underline"
+                            onClick={() => buscarPiezaEnStock(fichada.id_pieza)}
+                            title="Ver detalle de pieza"
+                          >
+                            {cargandoPieza ? '...' : fichada.id_pieza}
+                          </div>
                           <div className="col-span-5 flex items-center gap-2">
                             {editandoDescripcionEste ? (
                               <div className="flex gap-1 flex-1">
@@ -820,7 +898,46 @@ export default function FichadasPage() {
                                   >
                                     <span className="text-xs text-gray-500 w-6">#{idx + 1}</span>
                                     <span className="font-mono font-medium">{fichada.hora}</span>
-                                    <span className="font-mono text-sm flex-1">{fichada.id_pieza}</span>
+                                    {/* Miniatura de imagen si existe */}
+                                    {fichada.imagen && fichada.en_stock && (
+                                      <div className="flex-shrink-0">
+                                        <img 
+                                          src={fichada.imagen.split(',')[0].trim()} 
+                                          alt={fichada.id_pieza}
+                                          className="w-10 h-10 object-cover rounded border border-gray-300 cursor-pointer hover:opacity-80"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            buscarPiezaEnStock(fichada.id_pieza);
+                                          }}
+                                          onError={(e) => {
+                                            (e.target as HTMLImageElement).style.display = 'none';
+                                          }}
+                                        />
+                                      </div>
+                                    )}
+                                    <span 
+                                      className="font-mono text-sm text-blue-600 cursor-pointer hover:text-blue-800 hover:underline"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        buscarPiezaEnStock(fichada.id_pieza);
+                                      }}
+                                      title="Ver detalle de pieza"
+                                    >
+                                      {fichada.id_pieza}
+                                    </span>
+                                    {/* Artículo y coche si existe */}
+                                    {fichada.en_stock && fichada.articulo && (
+                                      <span className="text-sm text-gray-700 flex-1 truncate" title={`${fichada.articulo} - ${fichada.marca} ${fichada.modelo}`}>
+                                        <span className="font-medium">{fichada.articulo}</span>
+                                        {fichada.marca && (
+                                          <span className="text-gray-500 ml-1">
+                                            · {fichada.marca} {fichada.modelo}
+                                          </span>
+                                        )}
+                                      </span>
+                                    )}
+                                    {/* Espacio flexible si no hay datos */}
+                                    {(!fichada.en_stock || !fichada.articulo) && <span className="flex-1" />}
                                     {/* Indicador de stock */}
                                     <span className="w-6 text-center" title={
                                       fichada.en_stock === null 
@@ -955,6 +1072,176 @@ export default function FichadasPage() {
           )}
         </div>
       </main>
+
+      {/* Modal de detalle de pieza */}
+      {piezaDetalle && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setPiezaDetalle(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            {/* Header del modal */}
+            <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-t-2xl">
+              <div className="px-6 py-4 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-white">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                    </svg>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold text-white">Detalle de Pieza</h3>
+                    <p className="text-blue-100 text-sm">En stock</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setPiezaDetalle(null)}
+                  className="w-8 h-8 bg-white/20 hover:bg-white/30 rounded-full flex items-center justify-center text-white transition-colors"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            {/* Contenido del modal */}
+            <div className="p-6">
+              {/* Galería de imágenes */}
+              {(() => {
+                const imagenes = getImagenes(piezaDetalle.imagen);
+                if (imagenes.length === 0) return null;
+                
+                return (
+                  <div className="mb-6">
+                    <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+                      </svg>
+                      Imágenes ({imagenes.length})
+                    </h4>
+                    <div className={`grid gap-3 ${imagenes.length === 1 ? 'grid-cols-1' : imagenes.length === 2 ? 'grid-cols-2' : 'grid-cols-3'}`}>
+                      {imagenes.map((url, idx) => (
+                        <a 
+                          key={idx} 
+                          href={url} 
+                          target="_blank" 
+                          rel="noopener noreferrer"
+                          className="group relative block"
+                        >
+                          <img 
+                            src={url} 
+                            alt={`Pieza ${idx + 1}`} 
+                            className={`w-full object-cover rounded-xl border border-gray-200 bg-gray-50 transition-transform group-hover:scale-[1.02] ${imagenes.length === 1 ? 'max-h-64' : 'h-32'}`}
+                            onError={(e) => { (e.target as HTMLImageElement).src = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><rect fill="%23f3f4f6" width="100" height="100"/><text x="50" y="55" text-anchor="middle" fill="%239ca3af" font-size="12">Error</text></svg>'; }}
+                          />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })()}
+
+              {/* Información principal */}
+              <div className="grid grid-cols-2 gap-4 mb-6">
+                <div className="col-span-2 bg-blue-50 rounded-xl p-4">
+                  <p className="text-xs text-blue-600 font-medium mb-1">Referencia ID</p>
+                  <p className="text-xl font-bold font-mono text-blue-800">{piezaDetalle.refid || '-'}</p>
+                </div>
+                
+                <div className="bg-gray-50 rounded-xl p-4">
+                  <p className="text-xs text-gray-500 font-medium mb-1">Artículo</p>
+                  <p className="text-sm font-semibold text-gray-800">{piezaDetalle.articulo || '-'}</p>
+                </div>
+                
+                <div className="bg-green-50 rounded-xl p-4">
+                  <p className="text-xs text-green-600 font-medium mb-1">Precio</p>
+                  <p className="text-xl font-bold text-green-700">{formatCurrency(piezaDetalle.precio)}</p>
+                </div>
+              </div>
+
+              {/* Referencias */}
+              <div className="mb-6">
+                <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 8.25h15m-16.5 7.5h15m-1.8-13.5-3.9 19.5m-2.1-19.5-3.9 19.5" />
+                  </svg>
+                  Referencias
+                </h4>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-1">OEM</p>
+                    <p className="text-sm font-mono font-medium text-gray-800">{piezaDetalle.oem || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-1">OE</p>
+                    <p className="text-sm font-mono font-medium text-gray-800">{piezaDetalle.oe || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-1">IAM</p>
+                    <p className="text-sm font-mono font-medium text-gray-800">{piezaDetalle.iam || '-'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Vehículo */}
+              <div className="mb-6">
+                <h4 className="text-sm font-bold text-gray-700 mb-3 flex items-center gap-2">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
+                  </svg>
+                  Vehículo
+                </h4>
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-1">Marca</p>
+                    <p className="text-sm font-medium text-gray-800">{piezaDetalle.marca || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-1">Modelo</p>
+                    <p className="text-sm font-medium text-gray-800">{piezaDetalle.modelo || '-'}</p>
+                  </div>
+                  <div className="bg-gray-50 rounded-lg p-3">
+                    <p className="text-xs text-gray-500 mb-1">Versión</p>
+                    <p className="text-sm font-medium text-gray-800">{piezaDetalle.version || '-'}</p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Ubicación y Observaciones */}
+              <div className="grid grid-cols-2 gap-4">
+                <div className="bg-amber-50 rounded-xl p-4">
+                  <p className="text-xs text-amber-600 font-medium mb-1 flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 10.5c0 7.142-7.5 11.25-7.5 11.25S4.5 17.642 4.5 10.5a7.5 7.5 0 1 1 15 0Z" />
+                    </svg>
+                    Ubicación
+                  </p>
+                  <p className="text-sm font-semibold text-amber-800">{piezaDetalle.ubicacion || 'No especificada'}</p>
+                </div>
+                
+                <div className="bg-purple-50 rounded-xl p-4">
+                  <p className="text-xs text-purple-600 font-medium mb-1 flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 0 1 .865-.501 48.172 48.172 0 0 0 3.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0 0 12 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018Z" />
+                    </svg>
+                    Observaciones
+                  </p>
+                  <p className="text-sm text-purple-800">{piezaDetalle.observaciones || 'Sin observaciones'}</p>
+                </div>
+              </div>
+            </div>
+
+            {/* Footer del modal */}
+            <div className="px-6 py-4 bg-gray-50 rounded-b-2xl flex justify-end">
+              <button
+                onClick={() => setPiezaDetalle(null)}
+                className="px-6 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+              >
+                Cerrar
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

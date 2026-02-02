@@ -163,8 +163,8 @@ class PiezaDesguace(Base):
     ubicacion = Column(String(100), nullable=True)  # Ubicación en almacén
     observaciones = Column(String(500), nullable=True)  # Observaciones
     articulo = Column(String(255), nullable=True)  # Nombre del artículo
-    marca = Column(String(100), nullable=True)  # Marca del vehículo
-    modelo = Column(String(100), nullable=True)  # Modelo del vehículo
+    marca = Column(String(100), nullable=True, index=True)  # Marca del vehículo
+    modelo = Column(String(100), nullable=True, index=True)  # Modelo del vehículo
     version = Column(String(100), nullable=True)  # Versión del vehículo
     imagen = Column(String(500), nullable=True)  # URL de la imagen
     
@@ -184,7 +184,7 @@ class PiezaVendida(Base):
     __tablename__ = "piezas_vendidas"
     
     id = Column(Integer, primary_key=True, index=True)
-    entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id", ondelete="CASCADE"))
+    entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id", ondelete="CASCADE"), index=True)
     
     # Campos de la pieza (copia de cuando se vendió)
     refid = Column(String(100), index=True, nullable=True)
@@ -195,8 +195,8 @@ class PiezaVendida(Base):
     ubicacion = Column(String(100), nullable=True)
     observaciones = Column(String(500), nullable=True)
     articulo = Column(String(255), nullable=True)
-    marca = Column(String(100), nullable=True)
-    modelo = Column(String(100), nullable=True)
+    marca = Column(String(100), nullable=True, index=True)
+    modelo = Column(String(100), nullable=True, index=True)
     version = Column(String(100), nullable=True)
     imagen = Column(String(500), nullable=True)
     

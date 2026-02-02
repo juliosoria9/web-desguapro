@@ -269,6 +269,26 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {/* Card: Estudio Coches (Solo Admin, Owner, Sysowner) */}
+          {(user.rol === 'sysowner' || user.rol === 'admin' || user.rol === 'owner') && (
+            <div
+              className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer"
+              onClick={() => router.push('/estudio-coches')}
+            >
+              <div className="w-10 h-10 mb-2 text-cyan-600">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.125-.504 1.125-1.125v-3.026a2.999 2.999 0 0 0-.879-2.121L16.5 9.879a2.999 2.999 0 0 0-2.121-.879H5.25A2.25 2.25 0 0 0 3 11.25v6.375c0 .621.504 1.125 1.125 1.125H5.25m13.5 0H12" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">
+                Estudio Coches
+              </h2>
+              <p className="text-gray-600">
+                Análisis por marca y modelo
+              </p>
+            </div>
+          )}
+
           {/* Card: Configuración de Precios (Todos los usuarios) */}
           <div
             className="bg-white rounded-lg shadow p-6 hover:shadow-lg transition-shadow cursor-pointer"
