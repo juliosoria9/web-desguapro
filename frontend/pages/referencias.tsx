@@ -86,7 +86,7 @@ export default function ReferenciasPage() {
     setResult(null);
     try {
       const response = await axios.post<BusquedaResponse>(
-        `${process.env.NEXT_PUBLIC_API_URL}/referencias/buscar`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/referencias/buscar`,
         { referencia: searchTerm.trim() },
         {
           withCredentials: true,
@@ -417,3 +417,4 @@ export default function ReferenciasPage() {
     </div>
   );
 }
+

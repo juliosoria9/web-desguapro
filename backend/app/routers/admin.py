@@ -14,7 +14,7 @@ from app.dependencies import get_current_user
 from app.models.busqueda import Usuario, AuditLog, BackupRecord
 from services.audit import AuditService
 from services.backup import BackupService
-from services.scheduler import obtener_estado_scheduler, forzar_backup_ahora
+from services.scheduler import obtener_estado_scheduler, forzar_backup_ahora, forzar_importacion_csv_ahora, forzar_limpieza_ventas_ahora
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -303,3 +303,55 @@ async def forzar_backup_scheduler(
     )
     
     return {"success": True, "message": "Backup programado ejecutado"}
+
+
+# ============== IMPORTACIÓN AUTOMÁTICA CSV ==============
+@router.post("/importar-csv-motocoche")
+def importar_csv_motocoche_ahora(
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """
+    Forzar importación inmediata del CSV de MotoCoche.
+    Solo admin+ puede ejecutar.
+    """
+    if current_user.rol not in ['admin', 'owner', 'sysowner']:
+        raise HTTPException(status_code=403, detail="Solo admin puede forzar importación")
+    
+    resultado = forzar_importacion_csv_ahora()
+    
+    AuditService.log(
+        db=db,
+        accion="IMPORTACION_CSV_FORZADA",
+        entidad="csv_motocoche",
+        descripcion=f"Importación CSV forzada: {resultado.get('piezas_importadas', 0)} nuevas, {resultado.get('piezas_vendidas', 0)} vendidas",
+        usuario=current_user
+    )
+    
+    return resultado
+
+
+@router.post("/limpiar-ventas-falsas")
+def limpiar_ventas_falsas_ahora(
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """
+    Forzar limpieza inmediata de ventas falsas.
+    Elimina piezas marcadas como vendidas que todavía existen en stock.
+    Solo admin+ puede ejecutar.
+    """
+    if current_user.rol not in ['admin', 'owner', 'sysowner']:
+        raise HTTPException(status_code=403, detail="Solo admin puede ejecutar limpieza")
+    
+    resultado = forzar_limpieza_ventas_ahora()
+    
+    AuditService.log(
+        db=db,
+        accion="LIMPIEZA_VENTAS_FALSAS",
+        entidad="piezas_vendidas",
+        descripcion=f"Limpieza ventas falsas: {resultado.get('piezas_eliminadas', 0)} eliminadas",
+        usuario=current_user
+    )
+    
+    return resultado

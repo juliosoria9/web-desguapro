@@ -104,7 +104,7 @@ export default function UsersAdminPage() {
   const fetchEmpresas = async () => {
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/entornos`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/entornos`,
         { withCredentials: true }
       );
       setEmpresas(response.data || []);
@@ -116,7 +116,7 @@ export default function UsersAdminPage() {
   const fetchUsersByEmpresa = async (empresaId: number) => {
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/usuarios?entorno_id=${empresaId}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios?entorno_id=${empresaId}`,
         { withCredentials: true }
       );
       setUsers(response.data.usuarios || []);
@@ -130,7 +130,7 @@ export default function UsersAdminPage() {
     // Owner solo ve usuarios de su empresa (sin seleccionar empresa)
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/usuarios`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios`,
         { withCredentials: true }
       );
       setUsers(response.data.usuarios || []);
@@ -143,7 +143,7 @@ export default function UsersAdminPage() {
   const fetchUsersAdmin = async () => {
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/usuarios-admin`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios-admin`,
         { withCredentials: true }
       );
       setUsers(response.data.usuarios || []);
@@ -163,7 +163,7 @@ export default function UsersAdminPage() {
     setLoading(true);
     try {
       await axios.post(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/entornos`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/entornos`,
         { nombre: newEmpresaNombre, descripcion: newEmpresaDescripcion },
         { withCredentials: true }
       );
@@ -187,7 +187,7 @@ export default function UsersAdminPage() {
 
     try {
       const response = await axios.delete(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/entornos/${empresaId}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/entornos/${empresaId}`,
         { withCredentials: true }
       );
       toast.success(response.data.message || 'Empresa eliminada');
@@ -221,8 +221,8 @@ export default function UsersAdminPage() {
     try {
       // sysowner y owner usan /usuarios, admin usa /usuarios-admin
       const endpoint = (user.rol === 'sysowner' || user.rol === 'owner')
-        ? `${process.env.NEXT_PUBLIC_API_URL}/auth/usuarios`
-        : `${process.env.NEXT_PUBLIC_API_URL}/auth/usuarios-admin`;
+        ? `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios`
+        : `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios-admin`;
       
       const payload: any = {
         email: newUserName,
@@ -278,7 +278,7 @@ export default function UsersAdminPage() {
 
     try {
       await axios.delete(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/usuarios/${userId}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios/${userId}`,
         { withCredentials: true }
       );
       toast.success('Usuario eliminado');
@@ -299,7 +299,7 @@ export default function UsersAdminPage() {
   const handleChangeRole = async (userId: number, newRole: string) => {
     try {
       await axios.put(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/usuarios/${userId}/rol?nuevo_rol=${newRole}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios/${userId}/rol?nuevo_rol=${newRole}`,
         {},
         { withCredentials: true }
       );
@@ -344,7 +344,7 @@ export default function UsersAdminPage() {
 
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/usuarios/${userId}/password`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios/${userId}/password`,
         { withCredentials: true }
       );
       
@@ -424,7 +424,7 @@ export default function UsersAdminPage() {
       // Solo hacer la petición si hay algo que cambiar
       if (params.toString()) {
         await axios.put(
-          `${process.env.NEXT_PUBLIC_API_URL}/auth/usuarios/${editingUser.id}?${params.toString()}`,
+          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios/${editingUser.id}?${params.toString()}`,
           {},
           { withCredentials: true }
         );
@@ -833,3 +833,4 @@ export default function UsersAdminPage() {
     </div>
   );
 }
+

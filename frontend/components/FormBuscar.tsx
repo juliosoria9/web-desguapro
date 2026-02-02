@@ -115,3 +115,4 @@ export function FormBuscar({ onResultado, plataformas }: BuscadorProps) {
     </div>
   );
 }
+

@@ -472,7 +472,7 @@ export default function StockMasivoPage() {
       const processItem = async (item: typeof items[0]): Promise<CheckResult | null> => {
         try {
           const response = await axios.post(
-            `${process.env.NEXT_PUBLIC_API_URL}/stock/verificar-masivo`,
+            `${process.env.NEXT_PUBLIC_API_URL}/api/v1/stock/verificar-masivo`,
             {
               items: [item],
               umbral_diferencia: umbral,
@@ -1559,3 +1559,4 @@ export default function StockMasivoPage() {
     </div>
   );
 }
+

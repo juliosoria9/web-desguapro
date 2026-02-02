@@ -34,6 +34,8 @@ interface PiezaInventario {
   ubicacion?: string | null;
   imagen?: string | null;
   fecha_venta?: string | null;
+  fecha_fichaje?: string | null;
+  dias_rotacion?: number | null;
 }
 
 interface InfoInventario {
@@ -81,7 +83,32 @@ const PLATAFORMAS_DISPONIBLES = [
   { id: 'ebay', nombre: 'eBay' },
   { id: 'ovoko', nombre: 'Ovoko (~10s)' },
   { id: 'partsss', nombre: 'Partsss (motos piezas nuevas)' },
+  { id: 'motomine', nombre: 'Motomine (motos UK)' },
 ];
+
+// Función para formatear tiempo relativo
+const formatTiempoRelativo = (fecha: string): string => {
+  const ahora = new Date();
+  const fechaVenta = new Date(fecha);
+  const diffMs = ahora.getTime() - fechaVenta.getTime();
+  const diffDias = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+  
+  if (diffDias === 0) return 'hoy';
+  if (diffDias === 1) return 'ayer';
+  if (diffDias < 7) return `${diffDias}d`;
+  if (diffDias < 30) return `${Math.floor(diffDias / 7)}sem`;
+  if (diffDias < 365) return `${Math.floor(diffDias / 30)}mes`;
+  if (diffDias < 730) return '1año';
+  return '+1año';
+};
+
+// Función para formatear rotación con color
+const getRotacionColor = (dias: number): string => {
+  if (dias <= 7) return 'text-green-600';
+  if (dias <= 30) return 'text-yellow-600';
+  if (dias <= 90) return 'text-orange-600';
+  return 'text-red-600';
+};
 
 export default function SearchPage() {
   const router = useRouter();
@@ -134,7 +161,7 @@ export default function SearchPage() {
         
         // 1. Buscar en plataformas rápidas
         const responseRapidas = await axios.post(
-          `${process.env.NEXT_PUBLIC_API_URL}/precios/buscar`,
+          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/precios/buscar`,
           { 
             referencia: ref,
             plataforma: 'todas',
@@ -158,7 +185,7 @@ export default function SearchPage() {
           // Buscar Ovoko en paralelo
           const promesas = [
             axios.post(
-              `${process.env.NEXT_PUBLIC_API_URL}/precios/buscar`,
+              `${process.env.NEXT_PUBLIC_API_URL}/api/v1/precios/buscar`,
               { referencia: ref, plataforma: 'ovoko', cantidad: cantidadPiezas, incluir_bparts: false, incluir_ovoko: false },
               { withCredentials: true }
             ).catch(e => ({ data: null, error: 'ovoko' }))
@@ -225,7 +252,7 @@ export default function SearchPage() {
       } else {
         // Búsqueda en una sola plataforma
         const response = await axios.post(
-          `${process.env.NEXT_PUBLIC_API_URL}/precios/buscar`,
+          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/precios/buscar`,
           { 
             referencia: ref,
             plataforma: plataforma,
@@ -267,7 +294,7 @@ export default function SearchPage() {
     setGuardandoFichada(true);
     try {
       await axios.post(
-        `${process.env.NEXT_PUBLIC_API_URL}/fichadas/registrar`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/registrar`,
         { id_pieza: idFichada.trim() },
         { withCredentials: true }
       );
@@ -658,16 +685,29 @@ export default function SearchPage() {
                           <span className="text-sm font-semibold text-orange-800">Vendidas</span>
                           <span className="text-lg font-bold text-orange-600">{result.inventario.vendidas}</span>
                         </div>
-                        <div className="space-y-1 max-h-32 overflow-y-auto">
+                        <div className="space-y-1 max-h-40 overflow-y-auto">
                           {result.inventario.piezas_vendidas.map((p) => (
-                            <div key={p.id} className="bg-white rounded p-2 text-xs flex items-center justify-between">
-                              <div>
+                            <div key={p.id} className="bg-white rounded p-2 text-xs">
+                              <div className="flex items-center justify-between">
                                 <span className="font-mono font-medium text-orange-700">{p.refid || p.oem}</span>
-                                {p.articulo && <span className="text-gray-500 ml-1">{p.articulo}</span>}
-                              </div>
-                              <div className="flex items-center gap-2">
-                                {p.fecha_venta && <span className="text-gray-400">{new Date(p.fecha_venta).toLocaleDateString('es-ES')}</span>}
                                 {p.precio && <span className="font-bold text-orange-600">€{p.precio.toFixed(2)}</span>}
+                              </div>
+                              <div className="flex items-center justify-between mt-1 text-[10px]">
+                                <div className="flex items-center gap-2">
+                                  {p.fecha_venta && (
+                                    <span className="text-gray-500" title={new Date(p.fecha_venta).toLocaleDateString('es-ES')}>
+                                      hace {formatTiempoRelativo(p.fecha_venta)}
+                                    </span>
+                                  )}
+                                  {p.dias_rotacion !== null && p.dias_rotacion !== undefined && (
+                                    <span className={`font-medium ${getRotacionColor(p.dias_rotacion)}`} title="Tiempo hasta venta">
+                                      ⟳{p.dias_rotacion}d
+                                    </span>
+                                  )}
+                                </div>
+                                {p.fecha_venta && (
+                                  <span className="text-gray-400">{new Date(p.fecha_venta).toLocaleDateString('es-ES')}</span>
+                                )}
                               </div>
                             </div>
                           ))}
@@ -716,3 +756,4 @@ export default function SearchPage() {
     </div>
   );
 }
+

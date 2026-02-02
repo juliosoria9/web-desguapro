@@ -139,7 +139,7 @@ export default function InformeFichadasPage() {
     
     setLoading(true);
     try {
-      let url = `${process.env.NEXT_PUBLIC_API_URL}/fichadas/informe-rendimiento/${id}?tipo=${tipoVista}&cantidad=${cantidad}`;
+      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/informe-rendimiento/${id}?tipo=${tipoVista}&cantidad=${cantidad}`;
       if (entorno) {
         url += `&entorno_id=${entorno}`;
       }
@@ -156,7 +156,7 @@ export default function InformeFichadasPage() {
 
   const cargarSemanas = async () => {
     try {
-      let url = `${process.env.NEXT_PUBLIC_API_URL}/fichadas/semanas-disponibles/${id}?cantidad=12`;
+      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/semanas-disponibles/${id}?cantidad=12`;
       if (entorno) {
         url += `&entorno_id=${entorno}`;
       }
@@ -178,7 +178,7 @@ export default function InformeFichadasPage() {
     
     setLoading(true);
     try {
-      let url = `${process.env.NEXT_PUBLIC_API_URL}/fichadas/detalle-semana/${id}?semana=${semanaSeleccionada}`;
+      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/detalle-semana/${id}?semana=${semanaSeleccionada}`;
       if (entorno) {
         url += `&entorno_id=${entorno}`;
       }

@@ -6,7 +6,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/lib/auth-store';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const API_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/v1`;
 
 interface PiezaVerificacion {
   referencia: string;
@@ -25,6 +25,10 @@ interface PiezaVerificacion {
   oe?: string;
   iam?: string;
   observaciones?: string;
+  ultima_compra?: string;
+  ultima_venta?: string;
+  rotacion_dias?: number;
+  ventas_totales?: number;
 }
 
 interface ArchivoGuardado {
@@ -42,6 +46,11 @@ interface PiezaEditar {
   precio: string;
   observaciones: string;
   imagen: string;
+}
+
+interface Entorno {
+  id: number;
+  nombre: string;
 }
 
 export default function VerificarPiezasPage() {
@@ -73,6 +82,10 @@ export default function VerificarPiezasPage() {
   // Paginación para Stock OK
   const [paginaStock, setPaginaStock] = useState(1);
   const ITEMS_POR_PAGINA = 100;
+  
+  // Para sysowner: selector de entorno
+  const [empresas, setEmpresas] = useState<Entorno[]>([]);
+  const [selectedEmpresa, setSelectedEmpresa] = useState<number | null>(null);
 
   useEffect(() => {
     loadFromStorage();
@@ -80,11 +93,40 @@ export default function VerificarPiezasPage() {
   }, [loadFromStorage]);
 
   useEffect(() => {
-    if (token) {
+    if (token && user) {
+      if (user.rol === 'sysowner') {
+        fetchEmpresas();
+      } else {
+        cargarCSVGuardado();
+        cargarPiezasPedidas();
+      }
+    }
+  }, [token, user]);
+  
+  // Cuando sysowner selecciona una empresa, re-verificar el stock
+  useEffect(() => {
+    if (user?.rol === 'sysowner' && selectedEmpresa && token && archivoActual) {
+      // Re-verificar el CSV actual contra el stock del nuevo entorno
+      verificarCSVGuardado(archivoActual.id);
+    } else if (user?.rol === 'sysowner' && selectedEmpresa && token && !archivoActual) {
+      // Si no hay archivo cargado, cargar
       cargarCSVGuardado();
       cargarPiezasPedidas();
     }
-  }, [token]);
+  }, [selectedEmpresa]);
+  
+  // Fetch empresas para sysowner
+  const fetchEmpresas = async () => {
+    try {
+      const response = await axios.get(
+        `${API_URL}/auth/entornos`,
+        { headers: { Authorization: `Bearer ${token}` } }
+      );
+      setEmpresas(response.data || []);
+    } catch (error) {
+      console.error('Error fetching empresas:', error);
+    }
+  };
 
   // Cargar piezas que ya están pedidas
   const cargarPiezasPedidas = async () => {
@@ -103,6 +145,8 @@ export default function VerificarPiezasPage() {
   const cargarCSVGuardado = async () => {
     try {
       setCargandoInicial(true);
+      // Para sysowner, NO filtrar por entorno al listar CSVs (verá todos)
+      // El entorno seleccionado solo afecta la verificación del stock
       const response = await axios.get(`${API_URL}/piezas/csv-guardados`, {
         headers: { Authorization: `Bearer ${token}` }
       });
@@ -113,6 +157,10 @@ export default function VerificarPiezasPage() {
         const archivoGuardado = archivos[0];
         setArchivoActual(archivoGuardado);
         await verificarCSVGuardado(archivoGuardado.id);
+      } else {
+        setArchivoActual(null);
+        setResultados([]);
+        setResumen(null);
       }
     } catch (error) {
       console.error('Error cargando CSV guardado:', error);
@@ -125,9 +173,14 @@ export default function VerificarPiezasPage() {
   const verificarCSVGuardado = async (csvId: number) => {
     try {
       setLoading(true);
+      // Para sysowner, incluir el entorno seleccionado
+      const body: any = { umbral_compra: umbralCompra };
+      if (user?.rol === 'sysowner' && selectedEmpresa) {
+        body.entorno_id = selectedEmpresa;
+      }
       const response = await axios.post(
         `${API_URL}/piezas/verificar-guardado/${csvId}`,
-        { umbral_compra: umbralCompra },
+        body,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       
@@ -586,11 +639,11 @@ export default function VerificarPiezasPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Observaciones</label>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Artículo</label>
                 <input
                   type="text"
-                  value={editandoPieza.observaciones}
-                  onChange={e => setEditandoPieza({...editandoPieza, observaciones: e.target.value})}
+                  value={editandoPieza.imagen}
+                  onChange={e => setEditandoPieza({...editandoPieza, imagen: e.target.value})}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                 />
               </div>
@@ -598,8 +651,8 @@ export default function VerificarPiezasPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">URL Imagen</label>
                 <input
                   type="text"
-                  value={editandoPieza.imagen}
-                  onChange={e => setEditandoPieza({...editandoPieza, imagen: e.target.value})}
+                  value={editandoPieza.observaciones}
+                  onChange={e => setEditandoPieza({...editandoPieza, observaciones: e.target.value})}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
                   placeholder="https://..."
                 />
@@ -649,6 +702,36 @@ export default function VerificarPiezasPage() {
       </nav>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        {/* Selector de empresa para sysowner */}
+        {user.rol === 'sysowner' && (
+          <div className="bg-white rounded-lg shadow p-6 mb-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-4">Seleccionar Empresa</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {empresas.map((empresa) => (
+                <button
+                  key={empresa.id}
+                  onClick={() => setSelectedEmpresa(empresa.id)}
+                  className={`p-3 rounded-lg border-2 text-left transition-all ${
+                    selectedEmpresa === empresa.id
+                      ? 'border-blue-600 bg-blue-50'
+                      : 'border-gray-200 hover:border-blue-300'
+                  }`}
+                >
+                  <p className="font-semibold text-gray-900 text-sm">{empresa.nombre}</p>
+                </button>
+              ))}
+              {empresas.length === 0 && (
+                <p className="col-span-4 text-center text-gray-500 py-4">
+                  No hay empresas creadas
+                </p>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Mostrar solo si hay empresa seleccionada (o no es sysowner) */}
+        {(user.rol !== 'sysowner' || selectedEmpresa) ? (
+          <>
         {cargandoInicial ? (
           <div className="flex flex-col items-center justify-center py-12">
             <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mb-4"></div>
@@ -842,6 +925,8 @@ export default function VerificarPiezasPage() {
                           <th className="px-3 py-3 text-center text-xs font-medium text-red-700 uppercase font-bold">A COMPRAR</th>
                           <th className="px-3 py-3 text-left text-xs font-medium text-red-700 uppercase">Artículo</th>
                           <th className="px-3 py-3 text-left text-xs font-medium text-red-700 uppercase">Precio</th>
+                          <th className="px-3 py-3 text-center text-xs font-medium text-red-700 uppercase">Últ. Venta</th>
+                          <th className="px-3 py-3 text-center text-xs font-medium text-red-700 uppercase">Rotación</th>
                           <th className="px-3 py-3 text-center text-xs font-medium text-red-700 uppercase">Acciones</th>
                         </tr>
                       </thead>
@@ -849,9 +934,9 @@ export default function VerificarPiezasPage() {
                         {piezasAComprar.map((pieza, idx) => (
                           <tr key={idx} className={`hover:bg-red-50 ${!pieza.encontrada ? 'bg-orange-50' : ''}`}>
                             <td className="px-3 py-2">
-                              {pieza.imagen ? (
-                                <div className="relative w-12 h-12 cursor-pointer group" onClick={() => abrirGaleria(pieza.imagen)}>
-                                  <img src={pieza.imagen.split(',')[0].trim()} alt="" className="w-12 h-12 object-cover rounded group-hover:opacity-80" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
+                              {pieza.observaciones ? (
+                                <div className="relative w-12 h-12 cursor-pointer group" onClick={() => abrirGaleria(pieza.observaciones)}>
+                                  <img src={pieza.observaciones.split(',')[0].trim()} alt="" className="w-12 h-12 object-cover rounded group-hover:opacity-80" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
                                   {getCantidadMismoOem(pieza) > 1 && (
                                     <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium" title={`${getCantidadMismoOem(pieza)} piezas con OEM: ${pieza.oe}`}>
                                       {getCantidadMismoOem(pieza)}
@@ -875,6 +960,23 @@ export default function VerificarPiezasPage() {
                             <td className="px-3 py-2 text-center"><span className="text-lg font-bold text-red-600 bg-red-100 px-3 py-1 rounded-lg">+{pieza.cantidad_a_comprar}</span></td>
                             <td className="px-3 py-2 text-sm text-gray-600 max-w-xs truncate" title={pieza.articulo || pieza.observaciones || ''}>{pieza.articulo || pieza.observaciones || '-'}</td>
                             <td className="px-3 py-2 text-sm text-gray-600">{pieza.precio ? `${pieza.precio.toFixed(2)} €` : '-'}</td>
+                            <td className="px-3 py-2 text-center text-xs text-gray-500">
+                              {pieza.ultima_venta ? new Date(pieza.ultima_venta).toLocaleDateString('es-ES') : '-'}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              {pieza.rotacion_dias !== null && pieza.rotacion_dias !== undefined ? (
+                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                  pieza.rotacion_dias <= 30 ? 'bg-green-100 text-green-800' :
+                                  pieza.rotacion_dias <= 90 ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-red-100 text-red-800'
+                                }`}>
+                                  {pieza.rotacion_dias}d
+                                </span>
+                              ) : '-'}
+                              {pieza.ventas_totales ? (
+                                <span className="ml-1 text-xs text-gray-400">({pieza.ventas_totales})</span>
+                              ) : null}
+                            </td>
                             <td className="px-3 py-2 text-center">
                               <div className="flex items-center justify-center gap-1">
                                 {piezasPedidas.has(pieza.referencia) ? (
@@ -950,6 +1052,9 @@ export default function VerificarPiezasPage() {
                           <th className="px-3 py-3 text-center text-xs font-medium text-green-700 uppercase">% Stock</th>
                           <th className="px-3 py-3 text-left text-xs font-medium text-green-700 uppercase">Artículo</th>
                           <th className="px-3 py-3 text-left text-xs font-medium text-green-700 uppercase">Ubicación</th>
+                          <th className="px-3 py-3 text-center text-xs font-medium text-green-700 uppercase">Últ. Compra</th>
+                          <th className="px-3 py-3 text-center text-xs font-medium text-green-700 uppercase">Últ. Venta</th>
+                          <th className="px-3 py-3 text-center text-xs font-medium text-green-700 uppercase">Rotación</th>
                           <th className="px-3 py-3 text-center text-xs font-medium text-green-700 uppercase">Acciones</th>
                         </tr>
                       </thead>
@@ -959,9 +1064,9 @@ export default function VerificarPiezasPage() {
                           .map((pieza, idx) => (
                           <tr key={idx} className="hover:bg-green-50">
                             <td className="px-3 py-2">
-                              {pieza.imagen ? (
-                                <div className="relative w-12 h-12 cursor-pointer group" onClick={() => abrirGaleria(pieza.imagen)}>
-                                  <img src={pieza.imagen.split(',')[0].trim()} alt="" className="w-12 h-12 object-cover rounded group-hover:opacity-80" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
+                              {pieza.observaciones ? (
+                                <div className="relative w-12 h-12 cursor-pointer group" onClick={() => abrirGaleria(pieza.observaciones)}>
+                                  <img src={pieza.observaciones.split(',')[0].trim()} alt="" className="w-12 h-12 object-cover rounded group-hover:opacity-80" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
                                   {getCantidadMismoOem(pieza) > 1 && (
                                     <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium" title={`${getCantidadMismoOem(pieza)} piezas con OEM: ${pieza.oe}`}>
                                       {getCantidadMismoOem(pieza)}
@@ -980,6 +1085,26 @@ export default function VerificarPiezasPage() {
                             </td>
                             <td className="px-3 py-2 text-sm text-gray-600">{pieza.articulo || '-'}</td>
                             <td className="px-3 py-2 text-sm text-gray-600">{pieza.ubicacion || '-'}</td>
+                            <td className="px-3 py-2 text-center text-xs text-gray-500">
+                              {pieza.ultima_compra ? new Date(pieza.ultima_compra).toLocaleDateString('es-ES') : '-'}
+                            </td>
+                            <td className="px-3 py-2 text-center text-xs text-gray-500">
+                              {pieza.ultima_venta ? new Date(pieza.ultima_venta).toLocaleDateString('es-ES') : '-'}
+                            </td>
+                            <td className="px-3 py-2 text-center">
+                              {pieza.rotacion_dias !== null && pieza.rotacion_dias !== undefined ? (
+                                <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                  pieza.rotacion_dias <= 30 ? 'bg-green-100 text-green-800' :
+                                  pieza.rotacion_dias <= 90 ? 'bg-yellow-100 text-yellow-800' :
+                                  'bg-red-100 text-red-800'
+                                }`}>
+                                  {pieza.rotacion_dias}d
+                                </span>
+                              ) : '-'}
+                              {pieza.ventas_totales ? (
+                                <span className="ml-1 text-xs text-gray-400">({pieza.ventas_totales})</span>
+                              ) : null}
+                            </td>
                             <td className="px-3 py-2 text-center">
                               <div className="flex items-center justify-center gap-1">
                                 <button
@@ -1075,7 +1200,14 @@ export default function VerificarPiezasPage() {
             )}
           </>
         )}
+          </>
+        ) : (
+          <div className="bg-gray-50 rounded-lg p-8 text-center">
+            <p className="text-gray-500">Selecciona una empresa para ver el control de stock</p>
+          </div>
+        )}
       </main>
     </div>
   );
 }
+

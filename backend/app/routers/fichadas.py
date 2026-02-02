@@ -27,6 +27,7 @@ class FichadaResponse(BaseModel):
     id: int
     id_pieza: str
     descripcion: Optional[str]
+    comentario: Optional[str] = None
     fecha_fichada: datetime
     usuario_email: str
     
@@ -360,6 +361,7 @@ async def obtener_mis_fichadas(
             id=f.id,
             id_pieza=f.id_pieza,
             descripcion=f.descripcion,
+            comentario=f.comentario,
             fecha_fichada=f.fecha_fichada,
             usuario_email=current_user.email
         )
@@ -431,6 +433,64 @@ async def borrar_fichada(
         success=True,
         message="Fichada eliminada correctamente",
         id=fichada_id
+    )
+
+
+# ============== ACTUALIZAR DESCRIPCIÓN ==============
+class ActualizarDescripcionRequest(BaseModel):
+    descripcion: Optional[str] = None
+
+
+class ActualizarDescripcionResponse(BaseModel):
+    success: bool
+    message: str
+    id: int
+    descripcion: Optional[str]
+
+
+@router.patch("/descripcion/{fichada_id}", response_model=ActualizarDescripcionResponse)
+async def actualizar_descripcion(
+    fichada_id: int,
+    datos: ActualizarDescripcionRequest,
+    db: Session = Depends(get_db),
+    current_user: Usuario = Depends(get_current_user)
+):
+    """
+    Actualizar la descripción de una fichada.
+    - Cualquier usuario puede editar descripción de sus propias fichadas
+    - Admin+ puede editar descripción de cualquier fichada de su entorno
+    - Sysowner puede editar cualquier fichada
+    """
+    # Buscar la fichada
+    if current_user.rol == 'sysowner':
+        fichada = db.query(FichadaPieza).filter(
+            FichadaPieza.id == fichada_id
+        ).first()
+    else:
+        fichada = db.query(FichadaPieza).filter(
+            FichadaPieza.id == fichada_id,
+            FichadaPieza.entorno_trabajo_id == current_user.entorno_trabajo_id
+        ).first()
+    
+    if not fichada:
+        raise HTTPException(status_code=404, detail="Fichada no encontrada")
+    
+    # Verificar permisos
+    es_admin = current_user.rol in ['admin', 'owner', 'sysowner']
+    es_propia = fichada.usuario_id == current_user.id
+    
+    if not es_admin and not es_propia:
+        raise HTTPException(status_code=403, detail="No tienes permisos para editar esta fichada")
+    
+    # Actualizar descripción
+    fichada.descripcion = datos.descripcion.strip() if datos.descripcion else None
+    db.commit()
+    
+    return ActualizarDescripcionResponse(
+        success=True,
+        message="Descripción actualizada",
+        id=fichada_id,
+        descripcion=fichada.descripcion
     )
 
 

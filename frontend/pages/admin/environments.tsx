@@ -64,7 +64,7 @@ export default function EnvironmentsAdminPage() {
   const fetchEnvironments = async () => {
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/entornos`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/entornos`,
         {
           headers: { Authorization: `Bearer ${token}` },
         }
@@ -86,7 +86,7 @@ export default function EnvironmentsAdminPage() {
     setLoading(true);
     try {
       await axios.post(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/entornos`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/entornos`,
         {
           nombre: newEnvName,
           descripcion: newEnvDesc,
@@ -114,7 +114,7 @@ export default function EnvironmentsAdminPage() {
 
     try {
       const response = await axios.delete(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/entornos/${envId}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/entornos/${envId}`,
         { headers: { Authorization: `Bearer ${token}` } }
       );
       toast.success(response.data.message || 'Empresa eliminada');
@@ -245,3 +245,4 @@ export default function EnvironmentsAdminPage() {
     </div>
   );
 }
+

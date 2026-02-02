@@ -168,10 +168,15 @@ class PiezaDesguace(Base):
     version = Column(String(100), nullable=True)  # Versión del vehículo
     imagen = Column(String(500), nullable=True)  # URL de la imagen
     
+    # Campos de fichaje
+    fecha_fichaje = Column(DateTime, nullable=True)  # Fecha cuando alguien fichó la pieza
+    usuario_fichaje_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)  # Usuario que fichó
+    
     fecha_creacion = Column(DateTime, default=now_spain_naive)  # Hora de España
     
     # Relaciones
     base_desguace = relationship("BaseDesguace", back_populates="piezas")
+    usuario_fichaje = relationship("Usuario", foreign_keys=[usuario_fichaje_id])
 
 
 class PiezaVendida(Base):
@@ -195,12 +200,17 @@ class PiezaVendida(Base):
     version = Column(String(100), nullable=True)
     imagen = Column(String(500), nullable=True)
     
+    # Información de fichaje (copiada de cuando se vendió)
+    fecha_fichaje = Column(DateTime, nullable=True)  # Fecha cuando se fichó la pieza
+    usuario_fichaje_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)  # Usuario que fichó
+    
     # Información de la venta
     fecha_venta = Column(DateTime, default=now_spain_naive)  # Hora de España - Fecha en que se detectó la venta
     archivo_origen = Column(String(255), nullable=True)  # CSV de donde venía originalmente
     
     # Relaciones
     entorno_trabajo = relationship("EntornoTrabajo")
+    usuario_fichaje = relationship("Usuario", foreign_keys=[usuario_fichaje_id])
 
 
 # ============== CONFIGURACIÓN DE PRECIOS POR DESGUACE ==============

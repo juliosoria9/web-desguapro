@@ -9,6 +9,7 @@ from core.scrapers.ovoko_scraper import OvokoScraper
 from core.scrapers.opisto_scraper import OpistoScraper
 from core.scrapers.ebay_scraper import EbayScraper
 from core.scrapers.partsss_scraper import PartsssScraper
+from core.scrapers.motomine_scraper import MotomineScraper
 
 
 class ScraperFactory:
@@ -26,6 +27,7 @@ class ScraperFactory:
     _slow_scrapers: Dict[str, Type[PlatformScraper]] = {
         "ovoko": OvokoScraper,
         "partsss": PartsssScraper,  # Motos - piezas nuevas
+        "motomine": MotomineScraper,  # Motos - piezas usadas UK
     }
     
     @classmethod

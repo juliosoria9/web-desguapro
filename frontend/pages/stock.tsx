@@ -107,7 +107,7 @@ export default function StockPage() {
       });
 
       const response = await axios.post(
-        `${process.env.NEXT_PUBLIC_API_URL}/stock/verificar`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/stock/verificar`,
         { 
           items,
           umbral_diferencia: umbral,
@@ -287,3 +287,4 @@ export default function StockPage() {
     </div>
   );
 }
+

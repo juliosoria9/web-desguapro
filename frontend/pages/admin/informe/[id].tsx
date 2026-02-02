@@ -73,7 +73,7 @@ export default function InformeUsuarioPage() {
   const fetchInforme = async () => {
     try {
       setLoading(true);
-      let url = `${process.env.NEXT_PUBLIC_API_URL}/auth/usuarios/${id}/informe?dias=${dias}`;
+      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios/${id}/informe?dias=${dias}`;
       if (usarFechas && fechaInicio && fechaFin) {
         url += `&fecha_inicio=${fechaInicio}&fecha_fin=${fechaFin}`;
       }

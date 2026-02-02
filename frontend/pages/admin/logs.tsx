@@ -39,7 +39,7 @@ export default function LogsAuditoriaPage() {
   const [fechaDesde, setFechaDesde] = useState('');
   const [fechaHasta, setFechaHasta] = useState('');
 
-  const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+  const API_URL = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1`;
 
   // Verificar acceso sysowner
   useEffect(() => {
@@ -306,3 +306,4 @@ export default function LogsAuditoriaPage() {
     </div>
   );
 }
+

@@ -22,6 +22,9 @@ interface PiezaVendida {
   imagen: string | null;
   fecha_venta: string | null;
   archivo_origen: string | null;
+  fecha_fichaje: string | null;
+  usuario_fichaje: string | null;
+  dias_rotacion: number | null;
 }
 
 interface Resumen {
@@ -46,6 +49,7 @@ export default function VentasPage() {
   const [ventas, setVentas] = useState<PiezaVendida[]>([]);
   const [resumen, setResumen] = useState<Resumen | null>(null);
   const [total, setTotal] = useState(0);
+  const [valorTotal, setValorTotal] = useState(0);
   const [offset, setOffset] = useState(0);
   const limit = 50;
   
@@ -101,7 +105,7 @@ export default function VentasPage() {
   const fetchEmpresas = async () => {
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/entornos`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/entornos`,
         { withCredentials: true }
       );
       setEmpresas(response.data || []);
@@ -125,17 +129,18 @@ export default function VentasPage() {
       
       // Fetch ventas
       const ventasRes = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/desguace/ventas?${queryString}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/ventas?${queryString}`,
         { withCredentials: true }
       );
       setVentas(ventasRes.data.ventas || []);
       setTotal(ventasRes.data.total || 0);
+      setValorTotal(ventasRes.data.valor_total || 0);
       
       // Fetch resumen solo para sysowner y owner
       if (user && ['sysowner', 'owner'].includes(user.rol)) {
         const resumenParams = selectedEmpresa ? `?entorno_id=${selectedEmpresa}` : '';
         const resumenRes = await axios.get(
-          `${process.env.NEXT_PUBLIC_API_URL}/desguace/ventas/resumen${resumenParams}`,
+          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/ventas/resumen${resumenParams}`,
           { withCredentials: true }
         );
         setResumen(resumenRes.data);
@@ -153,7 +158,7 @@ export default function VentasPage() {
     
     try {
       await axios.delete(
-        `${process.env.NEXT_PUBLIC_API_URL}/desguace/ventas/${id}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/ventas/${id}`,
         { withCredentials: true }
       );
       toast.success('Registro eliminado');
@@ -169,8 +174,23 @@ export default function VentasPage() {
     return imagenStr.split(',').map(url => url.trim()).filter(url => url.length > 0);
   };
 
-  // Calcular suma de precios de las ventas mostradas
-  const sumaPreciosVentas = ventas.reduce((acc, v) => acc + (v.precio || 0), 0);
+  // Contar piezas por OEM para mostrar en burbuja
+  const contadorPorOem = React.useMemo(() => {
+    const contador: Record<string, number> = {};
+    ventas.forEach(v => {
+      if (v.oem && v.oem.trim()) {
+        const oem = v.oem.trim().toLowerCase();
+        contador[oem] = (contador[oem] || 0) + 1;
+      }
+    });
+    return contador;
+  }, [ventas]);
+
+  // Función para obtener cantidad de piezas con mismo OEM
+  const getCantidadMismoOem = (venta: PiezaVendida): number => {
+    if (!venta.oem || !venta.oem.trim()) return 0;
+    return contadorPorOem[venta.oem.trim().toLowerCase()] || 0;
+  };
 
   // Función para aplicar filtro rápido de fecha
   const aplicarFiltroRapido = (dias: number, label: string) => {
@@ -202,7 +222,7 @@ export default function VentasPage() {
       queryParams.append('offset', '0');
       
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/desguace/ventas?${queryParams.toString()}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/ventas?${queryParams.toString()}`,
         { withCredentials: true }
       );
       
@@ -213,7 +233,7 @@ export default function VentasPage() {
       }
       
       // Crear CSV
-      const headers = ['Fecha Venta', 'Ref ID', 'Artículo', 'OEM', 'OE', 'IAM', 'Marca', 'Modelo', 'Versión', 'Precio', 'Ubicación', 'Observaciones'];
+      const headers = ['Fecha Venta', 'Ref ID', 'Artículo', 'OEM', 'OE', 'IAM', 'Marca', 'Modelo', 'Versión', 'Precio', 'Rotación (días)', 'Fecha Fichaje', 'Ubicación', 'Observaciones'];
       const rows = datos.map((v: PiezaVendida) => [
         v.fecha_venta ? new Date(v.fecha_venta).toLocaleDateString('es-ES') : '',
         v.refid || '',
@@ -225,6 +245,8 @@ export default function VentasPage() {
         v.modelo || '',
         v.version || '',
         v.precio?.toString() || '',
+        v.dias_rotacion?.toString() || '',
+        v.fecha_fichaje ? new Date(v.fecha_fichaje).toLocaleDateString('es-ES') : '',
         v.ubicacion || '',
         v.observaciones || '',
       ]);
@@ -337,7 +359,7 @@ export default function VentasPage() {
       </nav>
 
       {/* Main content */}
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8 py-8">
         
         {/* Selector de empresa para sysowner */}
         {user.rol === 'sysowner' && (
@@ -658,8 +680,8 @@ export default function VentasPage() {
                         {puedeVerIngresos && (
                           <div className="text-right">
                             <p className="text-xs text-green-600">Valor total</p>
-                            <p className="text-xl font-bold text-green-700">{formatCurrency(sumaPreciosVentas)}</p>
-                            <p className="text-xs text-green-500">(página actual: {ventas.length} piezas)</p>
+                            <p className="text-xl font-bold text-green-700">{formatCurrency(valorTotal)}</p>
+                            <p className="text-xs text-green-500">({total} piezas)</p>
                           </div>
                         )}
                       </div>
@@ -685,18 +707,37 @@ export default function VentasPage() {
                 </div>
               ) : (
                 <div className="overflow-x-auto">
-                  <table className="min-w-full">
+                  <table className="min-w-full table-fixed">
                     <thead className="bg-gray-50">
                       <tr>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Imagen</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Fecha Venta</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Ref ID</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Artículo</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">OEM</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Marca/Modelo</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Precio</th>
-                        <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Ubicación</th>
-                        <th className="px-4 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Acciones</th>
+                        <th className="w-16 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Imagen</th>
+                        <th className="w-24 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Fecha</th>
+                        <th className="w-24 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Ref ID</th>
+                        <th className="w-64 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Artículo</th>
+                        <th className="w-40 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">OEM</th>
+                        <th className="w-32 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Marca/Modelo</th>
+                        <th className="w-20 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Precio</th>
+                        <th className="w-20 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
+                          <div className="flex items-center gap-1">
+                            Rotación
+                            <div className="relative group">
+                              <button className="w-4 h-4 bg-gray-200 hover:bg-gray-300 rounded-full text-xs text-gray-600 flex items-center justify-center">
+                                ?
+                              </button>
+                              <div className="absolute left-0 top-5 z-50 hidden group-hover:block w-48 p-2 bg-gray-800 text-white text-xs rounded-lg shadow-lg">
+                                <p className="font-bold mb-1">Tiempo hasta venta:</p>
+                                <div className="space-y-1">
+                                  <div className="flex items-center gap-1"><span className="w-3 h-3 bg-green-500 rounded-full"></span> ≤7 días (excelente)</div>
+                                  <div className="flex items-center gap-1"><span className="w-3 h-3 bg-yellow-500 rounded-full"></span> ≤30 días (buena)</div>
+                                  <div className="flex items-center gap-1"><span className="w-3 h-3 bg-orange-500 rounded-full"></span> ≤90 días (media)</div>
+                                  <div className="flex items-center gap-1"><span className="w-3 h-3 bg-red-500 rounded-full"></span> &gt;90 días (lenta)</div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </th>
+                        <th className="w-24 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Ubicación</th>
+                        <th className="w-20 px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Acciones</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-gray-200">
@@ -704,7 +745,7 @@ export default function VentasPage() {
                         const imagenes = getImagenes(venta.imagen);
                         return (
                         <tr key={venta.id} className="hover:bg-blue-50 transition-colors cursor-pointer" onClick={() => setVentaDetalle(venta)}>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-3">
                             {imagenes.length > 0 ? (
                               <div className="relative">
                                 <img 
@@ -713,9 +754,9 @@ export default function VentasPage() {
                                   className="w-12 h-12 object-cover rounded-lg border border-gray-200"
                                   onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
                                 />
-                                {imagenes.length > 1 && (
-                                  <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold">
-                                    +{imagenes.length - 1}
+                                {getCantidadMismoOem(venta) > 1 && (
+                                  <span className="absolute -top-1 -right-1 bg-blue-600 text-white text-xs w-5 h-5 rounded-full flex items-center justify-center font-bold" title={`${getCantidadMismoOem(venta)} piezas con OEM: ${venta.oem}`}>
+                                    {getCantidadMismoOem(venta)}
                                   </span>
                                 )}
                               </div>
@@ -727,7 +768,7 @@ export default function VentasPage() {
                               </div>
                             )}
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-3">
                             <div className="text-sm text-gray-900 font-medium">
                               {venta.fecha_venta ? new Date(venta.fecha_venta).toLocaleDateString('es-ES') : '-'}
                             </div>
@@ -735,32 +776,50 @@ export default function VentasPage() {
                               {venta.fecha_venta ? new Date(venta.fecha_venta).toLocaleTimeString('es-ES', {hour: '2-digit', minute: '2-digit'}) : ''}
                             </div>
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-3">
                             <span className="text-sm font-mono font-semibold text-blue-600 bg-blue-50 px-2 py-1 rounded">
                               {venta.refid || '-'}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-sm text-gray-700 max-w-xs">
-                            <div className="truncate" title={venta.articulo || ''}>
+                          <td className="px-3 py-3 text-sm text-gray-700">
+                            <div className="line-clamp-2" title={venta.articulo || ''}>
                               {venta.articulo || '-'}
                             </div>
                           </td>
-                          <td className="px-4 py-3 text-sm text-gray-600 font-mono">
-                            {venta.oem || '-'}
+                          <td className="px-3 py-3 text-sm text-gray-600 font-mono">
+                            <div className="truncate" title={venta.oem || ''}>
+                              {venta.oem || '-'}
+                            </div>
                           </td>
-                          <td className="px-4 py-3 text-sm text-gray-600">
-                            <div>{venta.marca || '-'}</div>
-                            <div className="text-xs text-gray-400">{venta.modelo || ''}</div>
+                          <td className="px-3 py-3 text-sm text-gray-600">
+                            <div className="truncate" title={venta.marca || ''}>{venta.marca || '-'}</div>
+                            <div className="text-xs text-gray-400 truncate" title={venta.modelo || ''}>{venta.modelo || ''}</div>
                           </td>
-                          <td className="px-4 py-3">
+                          <td className="px-3 py-3">
                             <span className="text-sm font-bold text-green-600">
                               {formatCurrency(venta.precio)}
                             </span>
                           </td>
-                          <td className="px-4 py-3 text-sm text-gray-600">
-                            {venta.ubicacion || '-'}
+                          <td className="px-3 py-3 text-center">
+                            {venta.dias_rotacion !== null ? (
+                              <span className={`px-2 py-1 rounded-full text-xs font-medium ${
+                                venta.dias_rotacion <= 7 ? 'bg-green-100 text-green-800' :
+                                venta.dias_rotacion <= 30 ? 'bg-yellow-100 text-yellow-800' :
+                                venta.dias_rotacion <= 90 ? 'bg-orange-100 text-orange-800' :
+                                'bg-red-100 text-red-800'
+                              }`} title={`Fichada: ${venta.fecha_fichaje ? new Date(venta.fecha_fichaje).toLocaleDateString('es-ES') : 'N/A'}`}>
+                                {venta.dias_rotacion}d
+                              </span>
+                            ) : (
+                              <span className="text-xs text-gray-400">-</span>
+                            )}
                           </td>
-                          <td className="px-4 py-3 text-center" onClick={(e) => e.stopPropagation()}>
+                          <td className="px-3 py-3 text-sm text-gray-600">
+                            <div className="truncate" title={venta.ubicacion || ''}>
+                              {venta.ubicacion || '-'}
+                            </div>
+                          </td>
+                          <td className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center justify-center gap-2">
                               <button
                                 onClick={() => setVentaDetalle(venta)}
@@ -793,11 +852,11 @@ export default function VentasPage() {
 
               {/* Paginación */}
               {total > limit && (
-                <div className="p-4 border-t flex justify-between items-center">
+                <div className="p-4 border-t flex flex-wrap justify-between items-center gap-4">
                   <p className="text-sm text-gray-500">
                     Mostrando {offset + 1} - {Math.min(offset + limit, total)} de {total}
                   </p>
-                  <div className="flex gap-2">
+                  <div className="flex items-center gap-2">
                     <button
                       onClick={() => { setOffset(Math.max(0, offset - limit)); fetchData(); }}
                       disabled={offset === 0}
@@ -805,6 +864,28 @@ export default function VentasPage() {
                     >
                       Anterior
                     </button>
+                    
+                    {/* Selector de página */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-gray-500">Página</span>
+                      <input
+                        type="number"
+                        min={1}
+                        max={Math.ceil(total / limit)}
+                        value={Math.floor(offset / limit) + 1}
+                        onChange={(e) => {
+                          const page = parseInt(e.target.value) || 1;
+                          const maxPage = Math.ceil(total / limit);
+                          const validPage = Math.min(Math.max(1, page), maxPage);
+                          setOffset((validPage - 1) * limit);
+                        }}
+                        onBlur={fetchData}
+                        onKeyDown={(e) => e.key === 'Enter' && fetchData()}
+                        className="w-16 px-2 py-2 border rounded-lg text-sm text-center"
+                      />
+                      <span className="text-sm text-gray-500">de {Math.ceil(total / limit)}</span>
+                    </div>
+                    
                     <button
                       onClick={() => { setOffset(offset + limit); fetchData(); }}
                       disabled={offset + limit >= total}
@@ -983,6 +1064,60 @@ export default function VentasPage() {
                 </div>
               </div>
 
+              {/* Rotación y Fichaje */}
+              <div className="mt-4 grid grid-cols-2 gap-4">
+                <div className={`rounded-xl p-4 ${
+                  ventaDetalle.dias_rotacion !== null 
+                    ? ventaDetalle.dias_rotacion <= 7 ? 'bg-green-50' 
+                      : ventaDetalle.dias_rotacion <= 30 ? 'bg-yellow-50' 
+                      : ventaDetalle.dias_rotacion <= 90 ? 'bg-orange-50' 
+                      : 'bg-red-50'
+                    : 'bg-gray-50'
+                }`}>
+                  <p className={`text-xs font-medium mb-1 flex items-center gap-1 ${
+                    ventaDetalle.dias_rotacion !== null 
+                      ? ventaDetalle.dias_rotacion <= 7 ? 'text-green-600' 
+                        : ventaDetalle.dias_rotacion <= 30 ? 'text-yellow-600' 
+                        : ventaDetalle.dias_rotacion <= 90 ? 'text-orange-600' 
+                        : 'text-red-600'
+                      : 'text-gray-500'
+                  }`}>
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                    </svg>
+                    Rotación
+                  </p>
+                  <p className={`text-lg font-bold ${
+                    ventaDetalle.dias_rotacion !== null 
+                      ? ventaDetalle.dias_rotacion <= 7 ? 'text-green-800' 
+                        : ventaDetalle.dias_rotacion <= 30 ? 'text-yellow-800' 
+                        : ventaDetalle.dias_rotacion <= 90 ? 'text-orange-800' 
+                        : 'text-red-800'
+                      : 'text-gray-600'
+                  }`}>
+                    {ventaDetalle.dias_rotacion !== null ? `${ventaDetalle.dias_rotacion} días` : 'Sin datos'}
+                  </p>
+                </div>
+                
+                <div className="bg-blue-50 rounded-xl p-4">
+                  <p className="text-xs text-blue-600 font-medium mb-1 flex items-center gap-1">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9.568 3H5.25A2.25 2.25 0 0 0 3 5.25v4.318c0 .597.237 1.17.659 1.591l9.581 9.581c.699.699 1.78.872 2.607.33a18.095 18.095 0 0 0 5.223-5.223c.542-.827.369-1.908-.33-2.607L11.16 3.66A2.25 2.25 0 0 0 9.568 3Z" />
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 6h.008v.008H6V6Z" />
+                    </svg>
+                    Fichaje
+                  </p>
+                  <p className="text-sm font-semibold text-blue-800">
+                    {ventaDetalle.fecha_fichaje 
+                      ? new Date(ventaDetalle.fecha_fichaje).toLocaleDateString('es-ES') 
+                      : 'No fichada'}
+                  </p>
+                  {ventaDetalle.usuario_fichaje && (
+                    <p className="text-xs text-blue-600 mt-1">Por: {ventaDetalle.usuario_fichaje}</p>
+                  )}
+                </div>
+              </div>
+
               {/* Información adicional */}
               {ventaDetalle.archivo_origen && (
                 <div className="mt-4 pt-4 border-t border-gray-200">
@@ -1020,3 +1155,4 @@ export default function VentasPage() {
     </div>
   );
 }
+

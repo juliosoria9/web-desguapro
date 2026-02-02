@@ -15,7 +15,7 @@ import os
 import json
 
 from app.database import get_db
-from app.models.busqueda import PiezaDesguace, BaseDesguace, CSVGuardado, PiezaPedida
+from app.models.busqueda import PiezaDesguace, BaseDesguace, CSVGuardado, PiezaPedida, PiezaVendida
 from app.dependencies import get_current_user
 from utils.security import TokenData
 from utils.timezone import now_spain_naive
@@ -26,6 +26,31 @@ router = APIRouter()
 # Directorio para guardar CSVs
 CSV_STORAGE_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "csv_storage")
 os.makedirs(CSV_STORAGE_DIR, exist_ok=True)
+
+
+def obtener_ruta_csv_real(ruta_guardada: str) -> str:
+    """
+    Convierte una ruta guardada en BD a la ruta real del sistema.
+    Maneja diferencias entre Linux/Windows.
+    """
+    if not ruta_guardada:
+        return ""
+    
+    # Extraer solo el nombre del archivo de la ruta guardada
+    nombre_archivo = os.path.basename(ruta_guardada.replace('\\', '/'))
+    
+    # Construir ruta local
+    ruta_local = os.path.join(CSV_STORAGE_DIR, nombre_archivo)
+    
+    # Si existe, devolver esa ruta
+    if os.path.exists(ruta_local):
+        return ruta_local
+    
+    # Si la ruta original existe (mismo SO), devolverla
+    if os.path.exists(ruta_guardada):
+        return ruta_guardada
+    
+    return ruta_local
 
 
 # ============== SCHEMAS ==============
@@ -367,7 +392,7 @@ async def verificar_piezas_csv(
             if item.get('iam'):
                 todas_refs.add(item['iam'])
         
-        # Una sola consulta para todas las piezas del inventario
+        # Una sola consulta para todas las piezas del inventario (incluir fecha_creacion para última compra)
         piezas_stock = {}
         if base_desguace:
             piezas_db = db.query(
@@ -378,7 +403,8 @@ async def verificar_piezas_csv(
                 PiezaDesguace.articulo,
                 PiezaDesguace.marca,
                 PiezaDesguace.precio,
-                PiezaDesguace.ubicacion
+                PiezaDesguace.ubicacion,
+                PiezaDesguace.fecha_creacion
             ).filter(
                 PiezaDesguace.base_desguace_id == base_desguace.id
             ).all()
@@ -390,6 +416,27 @@ async def verificar_piezas_csv(
                         if campo not in piezas_stock:
                             piezas_stock[campo] = []
                         piezas_stock[campo].append(pieza)
+        
+        # Consultar historial de ventas por OEM para calcular rotación
+        ventas_por_oem = {}
+        if current_user.entorno_trabajo_id:
+            ventas_db = db.query(
+                PiezaVendida.oem,
+                PiezaVendida.fecha_venta,
+                PiezaVendida.fecha_fichaje
+            ).filter(
+                PiezaVendida.entorno_trabajo_id == current_user.entorno_trabajo_id,
+                PiezaVendida.oem.in_(todas_refs)
+            ).order_by(PiezaVendida.fecha_venta.desc()).all()
+            
+            for venta in ventas_db:
+                if venta.oem:
+                    if venta.oem not in ventas_por_oem:
+                        ventas_por_oem[venta.oem] = []
+                    ventas_por_oem[venta.oem].append({
+                        'fecha_venta': venta.fecha_venta,
+                        'fecha_fichaje': venta.fecha_fichaje
+                    })
         
         resultados = []
         encontradas = 0
@@ -423,6 +470,28 @@ async def verificar_piezas_csv(
                 if necesita_comprar:
                     a_comprar += 1
                 
+                # Calcular última compra (fecha más reciente de stock)
+                ultima_compra = None
+                fechas_compra = [p.fecha_creacion for p in piezas_encontradas if p.fecha_creacion]
+                if fechas_compra:
+                    ultima_compra = max(fechas_compra).isoformat() if fechas_compra else None
+                
+                # Obtener datos de ventas para esta referencia
+                ventas = ventas_por_oem.get(ref, [])
+                ultima_venta = ventas[0]['fecha_venta'].isoformat() if ventas and ventas[0]['fecha_venta'] else None
+                
+                # Calcular rotación promedio (días entre fichaje/compra y venta)
+                rotacion_dias = None
+                if ventas:
+                    dias_totales = []
+                    for v in ventas:
+                        if v['fecha_venta'] and v['fecha_fichaje']:
+                            diff = (v['fecha_venta'] - v['fecha_fichaje']).days
+                            if diff >= 0:
+                                dias_totales.append(diff)
+                    if dias_totales:
+                        rotacion_dias = round(sum(dias_totales) / len(dias_totales), 1)
+                
                 resultados.append({
                     'referencia': ref,
                     'cantidad_solicitada': cantidad_solicitada,
@@ -440,10 +509,29 @@ async def verificar_piezas_csv(
                     'oe': item.get('oe'),
                     'iam': item.get('iam'),
                     'observaciones': item.get('observaciones'),
+                    'ultima_compra': ultima_compra,
+                    'ultima_venta': ultima_venta,
+                    'rotacion_dias': rotacion_dias,
+                    'ventas_totales': len(ventas),
                 })
             else:
                 # No encontrada en inventario = NECESITA COMPRAR toda la cantidad
                 a_comprar += 1
+                
+                # También obtener ventas para piezas no en stock
+                ventas = ventas_por_oem.get(ref, [])
+                ultima_venta = ventas[0]['fecha_venta'].isoformat() if ventas and ventas[0]['fecha_venta'] else None
+                rotacion_dias = None
+                if ventas:
+                    dias_totales = []
+                    for v in ventas:
+                        if v['fecha_venta'] and v['fecha_fichaje']:
+                            diff = (v['fecha_venta'] - v['fecha_fichaje']).days
+                            if diff >= 0:
+                                dias_totales.append(diff)
+                    if dias_totales:
+                        rotacion_dias = round(sum(dias_totales) / len(dias_totales), 1)
+                
                 resultados.append({
                     'referencia': ref,
                     'cantidad_solicitada': cantidad_solicitada,
@@ -451,9 +539,9 @@ async def verificar_piezas_csv(
                     'cantidad_stock': 0,
                     'suficiente': False,
                     'porcentaje_stock': 0,
-                    'necesita_comprar': True,  # Las no encontradas también van a comprar
+                    'necesita_comprar': True,
                     'cantidad_a_comprar': cantidad_solicitada,
-                    'articulo': item.get('observaciones'),  # Usar observaciones como descripción
+                    'articulo': item.get('observaciones'),
                     'marca': None,
                     'precio': item.get('precio_csv'),
                     'ubicacion': None,
@@ -461,6 +549,10 @@ async def verificar_piezas_csv(
                     'oe': item.get('oe'),
                     'iam': item.get('iam'),
                     'observaciones': item.get('observaciones'),
+                    'ultima_compra': None,
+                    'ultima_venta': ultima_venta,
+                    'rotacion_dias': rotacion_dias,
+                    'ventas_totales': len(ventas),
                 })
         
         db.commit()
@@ -490,6 +582,7 @@ async def verificar_piezas_csv(
 
 class VerificarGuardadoRequest(BaseModel):
     umbral_compra: int = 30
+    entorno_id: Optional[int] = None  # Para sysowner
 
 
 @router.post("/verificar-guardado/{csv_id}")
@@ -501,28 +594,40 @@ async def verificar_csv_guardado(
 ):
     """
     Verificar disponibilidad de piezas usando un CSV guardado.
+    Sysowner puede especificar un entorno_id diferente.
     """
     try:
-        if not current_user.entorno_trabajo_id:
+        # Determinar entorno a usar
+        entorno_id = current_user.entorno_trabajo_id
+        if current_user.rol == "sysowner" and request.entorno_id:
+            entorno_id = request.entorno_id
+        
+        if not entorno_id:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Usuario no tiene un entorno de trabajo asignado"
             )
         
-        # Obtener el CSV guardado
-        csv_guardado = db.query(CSVGuardado).filter(
-            CSVGuardado.id == csv_id,
-            CSVGuardado.entorno_trabajo_id == current_user.entorno_trabajo_id
-        ).first()
+        # Obtener el CSV guardado - para sysowner, buscar sin filtrar por entorno
+        if current_user.rol == "sysowner":
+            csv_guardado = db.query(CSVGuardado).filter(
+                CSVGuardado.id == csv_id
+            ).first()
+        else:
+            csv_guardado = db.query(CSVGuardado).filter(
+                CSVGuardado.id == csv_id,
+                CSVGuardado.entorno_trabajo_id == entorno_id
+            ).first()
         
         if not csv_guardado:
             raise HTTPException(status_code=404, detail="Archivo no encontrado")
         
-        if not os.path.exists(csv_guardado.ruta_archivo):
+        ruta_real = obtener_ruta_csv_real(csv_guardado.ruta_archivo)
+        if not os.path.exists(ruta_real):
             raise HTTPException(status_code=404, detail="Archivo no existe en disco")
         
         # Leer contenido
-        with open(csv_guardado.ruta_archivo, 'rb') as f:
+        with open(ruta_real, 'rb') as f:
             content = f.read()
         
         # Detectar encoding
@@ -584,9 +689,9 @@ async def verificar_csv_guardado(
                 detail="No se encontraron referencias válidas en el archivo"
             )
         
-        # Obtener base de desguace del entorno
+        # Obtener base de desguace del entorno (usando entorno_id que ya considera sysowner)
         base_desguace = db.query(BaseDesguace).filter(
-            BaseDesguace.entorno_trabajo_id == current_user.entorno_trabajo_id
+            BaseDesguace.entorno_trabajo_id == entorno_id
         ).first()
         
         # Crear set de referencias para búsqueda
@@ -597,7 +702,7 @@ async def verificar_csv_guardado(
             if item.get('iam'):
                 todas_refs.add(item['iam'])
         
-        # Consulta optimizada
+        # Consulta optimizada (incluir fecha_creacion)
         piezas_stock = {}
         if base_desguace:
             piezas_db = db.query(
@@ -608,7 +713,8 @@ async def verificar_csv_guardado(
                 PiezaDesguace.articulo,
                 PiezaDesguace.marca,
                 PiezaDesguace.precio,
-                PiezaDesguace.ubicacion
+                PiezaDesguace.ubicacion,
+                PiezaDesguace.fecha_creacion
             ).filter(
                 PiezaDesguace.base_desguace_id == base_desguace.id
             ).all()
@@ -619,6 +725,26 @@ async def verificar_csv_guardado(
                         if campo not in piezas_stock:
                             piezas_stock[campo] = []
                         piezas_stock[campo].append(pieza)
+        
+        # Consultar historial de ventas por OEM para calcular rotación
+        ventas_por_oem = {}
+        ventas_db = db.query(
+            PiezaVendida.oem,
+            PiezaVendida.fecha_venta,
+            PiezaVendida.fecha_fichaje
+        ).filter(
+            PiezaVendida.entorno_trabajo_id == entorno_id,
+            PiezaVendida.oem.in_(todas_refs)
+        ).order_by(PiezaVendida.fecha_venta.desc()).all()
+        
+        for venta in ventas_db:
+            if venta.oem:
+                if venta.oem not in ventas_por_oem:
+                    ventas_por_oem[venta.oem] = []
+                ventas_por_oem[venta.oem].append({
+                    'fecha_venta': venta.fecha_venta,
+                    'fecha_fichaje': venta.fecha_fichaje
+                })
         
         resultados = []
         encontradas = 0
@@ -651,6 +777,28 @@ async def verificar_csv_guardado(
                 if necesita_comprar:
                     a_comprar += 1
                 
+                # Calcular última compra (fecha más reciente de stock)
+                ultima_compra = None
+                fechas_compra = [p.fecha_creacion for p in piezas_encontradas if p.fecha_creacion]
+                if fechas_compra:
+                    ultima_compra = max(fechas_compra).isoformat() if fechas_compra else None
+                
+                # Obtener datos de ventas para esta referencia
+                ventas = ventas_por_oem.get(ref, [])
+                ultima_venta = ventas[0]['fecha_venta'].isoformat() if ventas and ventas[0]['fecha_venta'] else None
+                
+                # Calcular rotación promedio (días entre fichaje/compra y venta)
+                rotacion_dias = None
+                if ventas:
+                    dias_totales = []
+                    for v in ventas:
+                        if v['fecha_venta'] and v['fecha_fichaje']:
+                            diff = (v['fecha_venta'] - v['fecha_fichaje']).days
+                            if diff >= 0:
+                                dias_totales.append(diff)
+                    if dias_totales:
+                        rotacion_dias = round(sum(dias_totales) / len(dias_totales), 1)
+                
                 resultados.append({
                     'referencia': ref,
                     'cantidad_solicitada': cantidad_solicitada,
@@ -668,9 +816,28 @@ async def verificar_csv_guardado(
                     'oe': item.get('oe'),
                     'iam': item.get('iam'),
                     'observaciones': item.get('observaciones'),
+                    'ultima_compra': ultima_compra,
+                    'ultima_venta': ultima_venta,
+                    'rotacion_dias': rotacion_dias,
+                    'ventas_totales': len(ventas),
                 })
             else:
                 a_comprar += 1
+                
+                # También obtener ventas para piezas no en stock
+                ventas = ventas_por_oem.get(ref, [])
+                ultima_venta = ventas[0]['fecha_venta'].isoformat() if ventas and ventas[0]['fecha_venta'] else None
+                rotacion_dias = None
+                if ventas:
+                    dias_totales = []
+                    for v in ventas:
+                        if v['fecha_venta'] and v['fecha_fichaje']:
+                            diff = (v['fecha_venta'] - v['fecha_fichaje']).days
+                            if diff >= 0:
+                                dias_totales.append(diff)
+                    if dias_totales:
+                        rotacion_dias = round(sum(dias_totales) / len(dias_totales), 1)
+                
                 resultados.append({
                     'referencia': ref,
                     'cantidad_solicitada': cantidad_solicitada,
@@ -688,6 +855,10 @@ async def verificar_csv_guardado(
                     'oe': item.get('oe'),
                     'iam': item.get('iam'),
                     'observaciones': item.get('observaciones'),
+                    'ultima_compra': None,
+                    'ultima_venta': ultima_venta,
+                    'rotacion_dias': rotacion_dias,
+                    'ventas_totales': len(ventas),
                 })
         
         logger.info(f"Usuario {current_user.email} verificó CSV guardado {csv_id}: {encontradas} encontradas, {a_comprar} para comprar")
@@ -716,17 +887,28 @@ async def verificar_csv_guardado(
 # ============== ENDPOINTS PARA CSV GUARDADOS ==============
 @router.get("/csv-guardados")
 async def listar_csv_guardados(
+    entorno_id: Optional[int] = None,
     current_user: TokenData = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Listar todos los CSVs guardados del entorno"""
+    """Listar todos los CSVs guardados. Sysowner ve todos los CSVs de todos los entornos."""
     try:
-        if not current_user.entorno_trabajo_id:
-            return {"archivos": []}
-        
-        archivos = db.query(CSVGuardado).filter(
-            CSVGuardado.entorno_trabajo_id == current_user.entorno_trabajo_id
-        ).order_by(CSVGuardado.fecha_subida.desc()).all()
+        # Para sysowner, mostrar todos los CSVs (o filtrar por entorno si se especifica)
+        if current_user.rol == "sysowner":
+            if entorno_id:
+                archivos = db.query(CSVGuardado).filter(
+                    CSVGuardado.entorno_trabajo_id == entorno_id
+                ).order_by(CSVGuardado.fecha_subida.desc()).all()
+            else:
+                # Sin filtro, mostrar todos
+                archivos = db.query(CSVGuardado).order_by(CSVGuardado.fecha_subida.desc()).all()
+        else:
+            # Usuario normal: solo sus CSVs
+            if not current_user.entorno_trabajo_id:
+                return {"archivos": []}
+            archivos = db.query(CSVGuardado).filter(
+                CSVGuardado.entorno_trabajo_id == current_user.entorno_trabajo_id
+            ).order_by(CSVGuardado.fecha_subida.desc()).all()
         
         return {
             "archivos": [
@@ -734,7 +916,8 @@ async def listar_csv_guardados(
                     "id": a.id,
                     "nombre": a.nombre,
                     "fecha": a.fecha_subida.isoformat() if a.fecha_subida else None,
-                    "total_piezas": a.total_piezas
+                    "total_piezas": a.total_piezas,
+                    "entorno_id": a.entorno_trabajo_id
                 }
                 for a in archivos
             ]
@@ -760,11 +943,12 @@ async def descargar_csv(
         if not csv_guardado:
             raise HTTPException(status_code=404, detail="Archivo no encontrado")
         
-        if not os.path.exists(csv_guardado.ruta_archivo):
+        ruta_real = obtener_ruta_csv_real(csv_guardado.ruta_archivo)
+        if not os.path.exists(ruta_real):
             raise HTTPException(status_code=404, detail="Archivo no existe en disco")
         
         return FileResponse(
-            csv_guardado.ruta_archivo,
+            ruta_real,
             filename=csv_guardado.nombre,
             media_type="text/csv"
         )
@@ -791,11 +975,12 @@ async def obtener_contenido_csv(
         if not csv_guardado:
             raise HTTPException(status_code=404, detail="Archivo no encontrado")
         
-        if not os.path.exists(csv_guardado.ruta_archivo):
-            raise HTTPException(status_code=404, detail="Archivo no existe en disco")
+        ruta_real = obtener_ruta_csv_real(csv_guardado.ruta_archivo)
+        if not os.path.exists(ruta_real):
+            raise HTTPException(status_code=404, detail=f"Archivo no existe en disco: {ruta_real}")
         
         # Leer contenido
-        with open(csv_guardado.ruta_archivo, 'rb') as f:
+        with open(ruta_real, 'rb') as f:
             content = f.read()
         
         # Detectar encoding
@@ -885,7 +1070,8 @@ async def actualizar_csv(
         contenido = '\n'.join(lineas)
         
         # Guardar archivo
-        with open(csv_guardado.ruta_archivo, 'w', encoding='utf-8') as f:
+        ruta_real = obtener_ruta_csv_real(csv_guardado.ruta_archivo)
+        with open(ruta_real, 'w', encoding='utf-8') as f:
             f.write(contenido)
         
         # Actualizar contador
@@ -924,8 +1110,9 @@ async def eliminar_csv(
             raise HTTPException(status_code=404, detail="Archivo no encontrado")
         
         # Eliminar archivo físico
-        if os.path.exists(csv_guardado.ruta_archivo):
-            os.remove(csv_guardado.ruta_archivo)
+        ruta_real = obtener_ruta_csv_real(csv_guardado.ruta_archivo)
+        if os.path.exists(ruta_real):
+            os.remove(ruta_real)
         
         # Eliminar registro de BD
         db.delete(csv_guardado)

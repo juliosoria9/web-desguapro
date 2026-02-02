@@ -21,6 +21,7 @@ interface MiFichada {
   id: number;
   id_pieza: string;
   descripcion: string | null;
+  comentario: string | null;
   fecha_fichada: string;
   usuario_email: string;
 }
@@ -101,6 +102,11 @@ export default function FichadasPage() {
   const [comentarioTemp, setComentarioTemp] = useState<string>('');
   const [guardandoComentario, setGuardandoComentario] = useState(false);
 
+  // Estado para descripción
+  const [editandoDescripcion, setEditandoDescripcion] = useState<number | null>(null);
+  const [descripcionTemp, setDescripcionTemp] = useState<string>('');
+  const [guardandoDescripcion, setGuardandoDescripcion] = useState(false);
+
   const esAdmin = user?.rol && ['admin', 'owner', 'sysowner'].includes(user.rol);
   const esSysowner = user?.rol === 'sysowner';
 
@@ -134,7 +140,7 @@ export default function FichadasPage() {
   const fetchEmpresas = async () => {
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/entornos`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/entornos`,
         { withCredentials: true }
       );
       setEmpresas(response.data || []);
@@ -146,7 +152,7 @@ export default function FichadasPage() {
   const cargarResumen = async () => {
     setCargandoResumen(true);
     try {
-      let url = `${process.env.NEXT_PUBLIC_API_URL}/fichadas/resumen-dia?fecha=${fechaFiltro}`;
+      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/resumen-dia?fecha=${fechaFiltro}`;
       if (esSysowner && selectedEmpresa) {
         url += `&entorno_id=${selectedEmpresa}`;
       }
@@ -166,7 +172,7 @@ export default function FichadasPage() {
     setCargandoMisFichadas(true);
     try {
       const response = await axios.get<MiFichada[]>(
-        `${process.env.NEXT_PUBLIC_API_URL}/fichadas/mis-fichadas?fecha=${fechaFiltro}&limite=100`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/mis-fichadas?fecha=${fechaFiltro}&limite=100`,
         { withCredentials: true }
       );
       setMisFichadas(response.data);
@@ -180,7 +186,7 @@ export default function FichadasPage() {
   const cargarResumenEquipo = async () => {
     try {
       const response = await axios.get<ResumenEquipo>(
-        `${process.env.NEXT_PUBLIC_API_URL}/fichadas/resumen-equipo?fecha=${fechaFiltro}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/resumen-equipo?fecha=${fechaFiltro}`,
         { withCredentials: true }
       );
       setResumenEquipo(response.data);
@@ -199,7 +205,7 @@ export default function FichadasPage() {
     setUsuarioSeleccionado(usuarioId);
     setCargandoDetalle(true);
     try {
-      let url = `${process.env.NEXT_PUBLIC_API_URL}/fichadas/detalle-usuario/${usuarioId}?fecha=${fechaFiltro}`;
+      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/detalle-usuario/${usuarioId}?fecha=${fechaFiltro}`;
       if (esSysowner && selectedEmpresa) {
         url += `&entorno_id=${selectedEmpresa}`;
       }
@@ -230,7 +236,7 @@ export default function FichadasPage() {
     setBorrando(fichadaId);
     try {
       await axios.delete(
-        `${process.env.NEXT_PUBLIC_API_URL}/fichadas/borrar/${fichadaId}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/borrar/${fichadaId}`,
         { withCredentials: true }
       );
       toast.success('Fichada eliminada correctamente');
@@ -241,7 +247,7 @@ export default function FichadasPage() {
         if (usuarioSeleccionado) {
           // Recargar detalle del usuario actual
           const response = await axios.get<DetalleFichadas>(
-            `${process.env.NEXT_PUBLIC_API_URL}/fichadas/detalle-usuario/${usuarioSeleccionado}?fecha=${fechaFiltro}`,
+            `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/detalle-usuario/${usuarioSeleccionado}?fecha=${fechaFiltro}`,
             { withCredentials: true }
           );
           setDetalle(response.data);
@@ -261,7 +267,7 @@ export default function FichadasPage() {
     setGuardandoComentario(true);
     try {
       await axios.patch(
-        `${process.env.NEXT_PUBLIC_API_URL}/fichadas/comentario/${fichadaId}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/comentario/${fichadaId}`,
         { comentario: comentarioTemp || null },
         { withCredentials: true }
       );
@@ -295,6 +301,77 @@ export default function FichadasPage() {
   const cancelarEdicionComentario = () => {
     setEditandoComentario(null);
     setComentarioTemp('');
+  };
+
+  // Funciones para editar comentarios en misFichadas
+  const iniciarEdicionComentarioMiFichada = (fichada: MiFichada) => {
+    setEditandoComentario(fichada.id);
+    setComentarioTemp(fichada.comentario || '');
+  };
+
+  const guardarComentarioMiFichada = async (fichadaId: number) => {
+    setGuardandoComentario(true);
+    try {
+      await axios.patch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/comentario/${fichadaId}`,
+        { comentario: comentarioTemp || null },
+        { withCredentials: true }
+      );
+      toast.success('Comentario guardado');
+      
+      // Actualizar misFichadas local
+      setMisFichadas(prev => 
+        prev.map(f => 
+          f.id === fichadaId ? { ...f, comentario: comentarioTemp || null } : f
+        )
+      );
+      
+      setEditandoComentario(null);
+      setComentarioTemp('');
+    } catch (error: any) {
+      console.error('Error guardando comentario:', error);
+      toast.error(error.response?.data?.detail || 'Error al guardar comentario');
+    } finally {
+      setGuardandoComentario(false);
+    }
+  };
+
+  // Funciones para editar descripción en misFichadas
+  const iniciarEdicionDescripcionMiFichada = (fichada: MiFichada) => {
+    setEditandoDescripcion(fichada.id);
+    setDescripcionTemp(fichada.descripcion || '');
+  };
+
+  const cancelarEdicionDescripcion = () => {
+    setEditandoDescripcion(null);
+    setDescripcionTemp('');
+  };
+
+  const guardarDescripcionMiFichada = async (fichadaId: number) => {
+    setGuardandoDescripcion(true);
+    try {
+      await axios.patch(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/descripcion/${fichadaId}`,
+        { descripcion: descripcionTemp || null },
+        { withCredentials: true }
+      );
+      toast.success('Descripción guardada');
+      
+      // Actualizar misFichadas local
+      setMisFichadas(prev => 
+        prev.map(f => 
+          f.id === fichadaId ? { ...f, descripcion: descripcionTemp || null } : f
+        )
+      );
+      
+      setEditandoDescripcion(null);
+      setDescripcionTemp('');
+    } catch (error: any) {
+      console.error('Error guardando descripción:', error);
+      toast.error(error.response?.data?.detail || 'Error al guardar descripción');
+    } finally {
+      setGuardandoDescripcion(false);
+    }
   };
 
   const esFechaHoy = (fechaStr: string) => {
@@ -438,56 +515,157 @@ export default function FichadasPage() {
                   No tienes fichadas para esta fecha
                 </div>
               ) : (
-                <div className="space-y-2">
+                <div className="space-y-1">
                   {/* Header */}
-                  <div className="grid grid-cols-12 gap-2 text-xs font-medium text-gray-500 uppercase px-3 py-2 bg-gray-50 rounded">
+                  <div className="grid grid-cols-12 gap-2 text-xs font-medium text-gray-500 uppercase px-3 py-1.5 bg-gray-50 rounded">
                     <div className="col-span-1">#</div>
-                    <div className="col-span-3">Hora</div>
-                    <div className="col-span-4">ID Pieza</div>
-                    <div className="col-span-3">Descripción</div>
-                    <div className="col-span-1 text-center">Acción</div>
+                    <div className="col-span-2">Hora</div>
+                    <div className="col-span-3">ID Pieza</div>
+                    <div className="col-span-5">Descripción</div>
+                    <div className="col-span-1 text-center">🗑</div>
                   </div>
                   
                   {misFichadas.map((fichada, idx) => {
                     const esDeHoy = esFechaHoy(fichada.fecha_fichada);
+                    const editandoComentarioEste = editandoComentario === fichada.id;
+                    const editandoDescripcionEste = editandoDescripcion === fichada.id;
+                    const tieneComentario = fichada.comentario || editandoComentarioEste;
                     return (
                       <div 
                         key={fichada.id}
-                        className="grid grid-cols-12 gap-2 items-center px-3 py-3 rounded border bg-white border-gray-200 hover:bg-gray-50"
+                        className={`px-3 rounded border bg-white border-gray-200 hover:bg-gray-50 ${tieneComentario ? 'py-2' : 'py-1.5'}`}
                       >
-                        <div className="col-span-1 text-xs text-gray-500">#{idx + 1}</div>
-                        <div className="col-span-3 font-mono text-sm">
-                          {new Date(fichada.fecha_fichada).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-                        </div>
-                        <div className="col-span-4 font-mono font-medium text-gray-900">{fichada.id_pieza}</div>
-                        <div className="col-span-3 text-sm text-gray-600 truncate">{fichada.descripcion || '-'}</div>
-                        <div className="col-span-1 text-center">
-                          {esDeHoy ? (
-                            <button
-                              onClick={() => borrarFichada(fichada.id, esDeHoy)}
-                              disabled={borrando === fichada.id}
-                              className="text-red-600 hover:text-red-800 disabled:opacity-50"
-                              title="Borrar fichada"
-                            >
-                              {borrando === fichada.id ? (
-                                <svg className="animate-spin h-5 w-5" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-                                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                        {/* Fila principal */}
+                        <div className="grid grid-cols-12 gap-2 items-center">
+                          <div className="col-span-1 text-xs text-gray-400">#{idx + 1}</div>
+                          <div className="col-span-2 font-mono text-xs text-gray-600">
+                            {new Date(fichada.fecha_fichada).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                          </div>
+                          <div className="col-span-3 font-mono font-medium text-gray-900 text-sm">{fichada.id_pieza}</div>
+                          <div className="col-span-5 flex items-center gap-2">
+                            {editandoDescripcionEste ? (
+                              <div className="flex gap-1 flex-1">
+                                <input
+                                  type="text"
+                                  value={descripcionTemp}
+                                  onChange={(e) => setDescripcionTemp(e.target.value)}
+                                  className="flex-1 px-2 py-0.5 text-sm border border-green-300 rounded focus:outline-none focus:ring-1 focus:ring-green-500"
+                                  placeholder="Descripción..."
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') guardarDescripcionMiFichada(fichada.id);
+                                    if (e.key === 'Escape') cancelarEdicionDescripcion();
+                                  }}
+                                />
+                                <button
+                                  onClick={() => guardarDescripcionMiFichada(fichada.id)}
+                                  disabled={guardandoDescripcion}
+                                  className="px-1.5 py-0.5 bg-green-600 text-white rounded text-xs hover:bg-green-700 disabled:opacity-50"
+                                >
+                                  {guardandoDescripcion ? '...' : '✓'}
+                                </button>
+                                <button
+                                  onClick={cancelarEdicionDescripcion}
+                                  className="px-1.5 py-0.5 bg-gray-200 text-gray-700 rounded text-xs hover:bg-gray-300"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <div 
+                                className="text-sm text-gray-600 cursor-pointer hover:text-green-600 truncate"
+                                onClick={() => iniciarEdicionDescripcionMiFichada(fichada)}
+                                title={fichada.descripcion || 'Clic para añadir descripción'}
+                              >
+                                {fichada.descripcion || (
+                                  <span className="text-gray-400 italic text-xs">+ descripción</span>
+                                )}
+                              </div>
+                            )}
+                            {/* Botón de comentario en línea si no hay comentario */}
+                            {!fichada.comentario && !editandoComentarioEste && (
+                              <button
+                                className="ml-2 text-xs text-gray-400 hover:text-blue-500"
+                                onClick={() => iniciarEdicionComentarioMiFichada(fichada)}
+                                title="Añadir comentario"
+                              >
+                                💬
+                              </button>
+                            )}
+                          </div>
+                          <div className="col-span-1 flex justify-center">
+                            {esDeHoy ? (
+                              <button
+                                onClick={() => borrarFichada(fichada.id, esDeHoy)}
+                                disabled={borrando === fichada.id}
+                                className="text-red-500 hover:text-red-700 disabled:opacity-50"
+                                title="Borrar fichada"
+                              >
+                                {borrando === fichada.id ? (
+                                  <svg className="animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                                  </svg>
+                                ) : (
+                                  <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
+                                  </svg>
+                                )}
+                              </button>
+                            ) : (
+                              <span title="Solo puedes borrar fichadas del día actual">
+                                <svg className="h-4 w-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
                                 </svg>
-                              ) : (
-                                <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"></path>
-                                </svg>
-                              )}
-                            </button>
-                          ) : (
-                            <span title="Solo puedes borrar fichadas del día actual">
-                              <svg className="h-5 w-5 text-gray-300 cursor-not-allowed" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z"></path>
-                              </svg>
-                            </span>
-                          )}
+                              </span>
+                            )}
+                          </div>
                         </div>
+                        
+                        {/* Fila de comentario (burbuja debajo) - solo si hay comentario o está editando */}
+                        {(fichada.comentario || editandoComentarioEste) && (
+                          <div className="mt-1.5 ml-6">
+                            {editandoComentarioEste ? (
+                              <div className="flex gap-1 items-center bg-blue-50 rounded-lg px-2 py-1.5 border border-blue-200">
+                                <span className="text-xs text-blue-400">💬</span>
+                                <input
+                                  type="text"
+                                  value={comentarioTemp}
+                                  onChange={(e) => setComentarioTemp(e.target.value)}
+                                  className="flex-1 px-2 py-0.5 text-sm border border-blue-300 rounded focus:outline-none focus:ring-1 focus:ring-blue-500 bg-white"
+                                  placeholder="Escribe un comentario..."
+                                  autoFocus
+                                  onKeyDown={(e) => {
+                                    if (e.key === 'Enter') guardarComentarioMiFichada(fichada.id);
+                                    if (e.key === 'Escape') cancelarEdicionComentario();
+                                  }}
+                                />
+                                <button
+                                  onClick={() => guardarComentarioMiFichada(fichada.id)}
+                                  disabled={guardandoComentario}
+                                  className="px-1.5 py-0.5 bg-blue-600 text-white rounded text-xs hover:bg-blue-700 disabled:opacity-50"
+                                >
+                                  {guardandoComentario ? '...' : '✓'}
+                                </button>
+                                <button
+                                  onClick={cancelarEdicionComentario}
+                                  className="px-1.5 py-0.5 bg-gray-200 text-gray-700 rounded text-xs hover:bg-gray-300"
+                                >
+                                  ✕
+                                </button>
+                              </div>
+                            ) : (
+                              <div 
+                                className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-blue-50 border border-blue-200 rounded-full cursor-pointer hover:bg-blue-100 hover:border-blue-300 transition-colors"
+                                onClick={() => iniciarEdicionComentarioMiFichada(fichada)}
+                                title="Clic para editar comentario"
+                              >
+                                <span className="text-xs">💬</span>
+                                <span className="text-xs text-blue-700 italic">{fichada.comentario}</span>
+                              </div>
+                            )}
+                          </div>
+                        )}
                       </div>
                     );
                   })}
@@ -780,3 +958,4 @@ export default function FichadasPage() {
     </div>
   );
 }
+

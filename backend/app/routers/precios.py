@@ -166,6 +166,21 @@ async def buscar_precios(
         
         plataformas_con_resultados = sum(1 for r in resultados_plataformas if r.cantidad_precios > 0)
         
+        # Si buscamos en una sola plataforma y no hay tipo de pieza,
+        # buscar SOLO en ecooparts (la más rápida para detectar tipo)
+        if request.plataforma != "todas" and not tipo_pieza_detectado and todos_precios:
+            logger.info("Buscando tipo de pieza en ecooparts...")
+            try:
+                resultado_eco = _scrape_platform("ecooparts", request.referencia, 5)
+                if resultado_eco.get("tipo_pieza"):
+                    tipo_pieza_detectado = resultado_eco["tipo_pieza"]
+                    logger.info(f"Tipo de pieza detectado de ecooparts: {tipo_pieza_detectado}")
+                    # Añadir precios para mejor referencia
+                    if resultado_eco["precios"]:
+                        todos_precios.extend(resultado_eco["precios"])
+            except Exception as e:
+                logger.warning(f"Error buscando tipo en ecooparts: {e}")
+        
         if not todos_precios:
             raise HTTPException(
                 status_code=404,
@@ -260,13 +275,21 @@ async def buscar_precios(
             vendidas_count = len(piezas_vendidas)
             piezas_vendidas_list = []
             for p in piezas_vendidas[:5]:  # Limitar a 5
+                # Calcular días de rotación
+                dias_rotacion = None
+                if p.fecha_venta and p.fecha_fichaje:
+                    delta = p.fecha_venta - p.fecha_fichaje
+                    dias_rotacion = delta.days
+                
                 piezas_vendidas_list.append({
                     "id": p.id,
                     "refid": p.refid,
                     "oem": p.oem,
                     "articulo": p.articulo,
                     "precio": p.precio,
-                    "fecha_venta": p.fecha_venta.isoformat() if p.fecha_venta else None
+                    "fecha_venta": p.fecha_venta.isoformat() if p.fecha_venta else None,
+                    "fecha_fichaje": p.fecha_fichaje.isoformat() if p.fecha_fichaje else None,
+                    "dias_rotacion": dias_rotacion
                 })
             
             inventario_info = InfoInventario(
@@ -275,16 +298,35 @@ async def buscar_precios(
                 piezas_stock=piezas_stock,
                 piezas_vendidas=piezas_vendidas_list
             )
+            
+            # Si no se detectó tipo de pieza desde scrapers, intentar obtenerlo del inventario propio
+            if not tipo_pieza_detectado and piezas_en_stock:
+                for p in piezas_en_stock:
+                    if p.articulo:
+                        tipo_pieza_detectado = p.articulo.strip().upper()
+                        logger.info(f"Tipo de pieza obtenido del inventario: {tipo_pieza_detectado}")
+                        break
+            
+            # También intentar con piezas vendidas si aún no hay tipo
+            if not tipo_pieza_detectado and piezas_vendidas:
+                for p in piezas_vendidas:
+                    if p.articulo:
+                        tipo_pieza_detectado = p.articulo.strip().upper()
+                        logger.info(f"Tipo de pieza obtenido de vendidas: {tipo_pieza_detectado}")
+                        break
+                        
         except Exception as inv_error:
             logger.warning(f"Error consultando inventario: {inv_error}")
         
         # Intentar sugerir precio basado en familia
-        # Usar el tipo de pieza detectado desde cualquier scraper
+        # Usar el tipo de pieza detectado desde cualquier scraper o inventario
         # Usa configuración del desguace si existe, sino CSV global
         sugerencia = None
         if tipo_pieza_detectado:
-            logger.info(f"Tipo de pieza detectado: {tipo_pieza_detectado}")
+            logger.info(f"Tipo de pieza para sugerencia: {tipo_pieza_detectado}")
+            logger.info(f"Precio medio para cálculo: {resumen.media}")
             sugerencia_data = sugerir_precio_db(db, usuario.entorno_trabajo_id, tipo_pieza_detectado, resumen.media)
+            logger.info(f"Resultado sugerencia_data: {sugerencia_data}")
             if sugerencia_data:
                 sugerencia = PrecioSugerido(
                     familia=sugerencia_data["familia"],
@@ -292,6 +334,9 @@ async def buscar_precios(
                     precios_familia=sugerencia_data["precios_familia"],
                     precio_mercado=sugerencia_data["precio_mercado"],
                 )
+                logger.info(f"Sugerencia creada: familia={sugerencia.familia}, precio={sugerencia.precio_sugerido}")
+        else:
+            logger.warning("No se detectó tipo de pieza, no se puede sugerir precio")
         
         # Buscar referencias IAM equivalentes en segundo plano
         referencias_iam = []

@@ -21,7 +21,7 @@ export default function LoginPage() {
 
     try {
       console.log('Intentando login con:', username);
-      const response = await axios.post(`${API_URL}/auth/login`, {
+      const response = await axios.post(`${API_URL}/api/v1/auth/login`, {
         email: username,  // El backend espera 'email' pero es el username
         password,
       }, {
@@ -125,3 +125,4 @@ export default function LoginPage() {
     </div>
   );
 }
+

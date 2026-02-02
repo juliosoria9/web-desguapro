@@ -74,3 +74,4 @@ export function ListaPrecios({ precios }: { precios: number[] }) {
     </div>
   );
 }
+

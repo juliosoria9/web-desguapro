@@ -91,7 +91,7 @@ export default function BaseDesguacePage() {
   const fetchEmpresas = async () => {
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/entornos`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/entornos`,
         { withCredentials: true }
       );
       setEmpresas(response.data || []);
@@ -105,7 +105,7 @@ export default function BaseDesguacePage() {
       setLoading(true);
       const params = selectedEmpresa ? `?entorno_id=${selectedEmpresa}` : '';
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/desguace/info${params}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/info${params}`,
         { withCredentials: true }
       );
       setBaseInfo(response.data);
@@ -150,7 +150,7 @@ export default function BaseDesguacePage() {
       formData.append('file', selectedFile);
 
       const response = await axios.post(
-        `${process.env.NEXT_PUBLIC_API_URL}/desguace/analizar`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/analizar`,
         formData,
         {
           withCredentials: true,
@@ -174,11 +174,20 @@ export default function BaseDesguacePage() {
         setMapeo(mapeoInicial);
       }
       
+      // Auto-detectar formato combinado
+      if (response.data.formato_combinado_detectado && response.data.columna_combinada_detectada) {
+        setModoCombinado(true);
+        setColumnaCombinada(response.data.columna_combinada_detectada);
+      }
+      
       setPaso('mapeo');
       
       // Mostrar mensaje según detección
       const detectados = response.data.campos_detectados || 0;
-      if (detectados > 0) {
+      const formatoCombinado = response.data.formato_combinado_detectado;
+      if (formatoCombinado) {
+        toast.success(`CSV analizado. Formato combinado OEM/OE/IAM detectado en columna "${response.data.columna_combinada_detectada}".`);
+      } else if (detectados > 0) {
         toast.success(`CSV analizado. Se detectaron ${detectados} campos automáticamente.`);
       } else {
         toast.success('CSV analizado. Asigna las columnas manualmente.');
@@ -237,7 +246,7 @@ export default function BaseDesguacePage() {
       }
 
       const response = await axios.post(
-        `${process.env.NEXT_PUBLIC_API_URL}/desguace/upload`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/upload`,
         formData,
         {
           withCredentials: true,
@@ -247,10 +256,17 @@ export default function BaseDesguacePage() {
         }
       );
 
+      const insertadas = response.data.piezas_insertadas || 0;
+      const actualizadas = response.data.piezas_actualizadas || 0;
       const vendidas = response.data.piezas_vendidas || 0;
-      const mensaje = vendidas > 0 
-        ? `Base de datos cargada: ${response.data.piezas_insertadas} piezas, ${vendidas} marcadas como vendidas`
-        : `Base de datos cargada: ${response.data.piezas_insertadas} piezas`;
+      
+      let mensaje = 'Base de datos cargada: ';
+      const partes = [];
+      if (insertadas > 0) partes.push(`${insertadas} nuevas`);
+      if (actualizadas > 0) partes.push(`${actualizadas} actualizadas`);
+      if (vendidas > 0) partes.push(`${vendidas} vendidas`);
+      mensaje += partes.length > 0 ? partes.join(', ') : '0 cambios';
+      
       toast.success(mensaje);
       
       // Reset wizard
@@ -291,7 +307,7 @@ export default function BaseDesguacePage() {
     try {
       const params = selectedEmpresa ? `?entorno_id=${selectedEmpresa}` : '';
       await axios.delete(
-        `${process.env.NEXT_PUBLIC_API_URL}/desguace/eliminar${params}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/eliminar${params}`,
         { withCredentials: true }
       );
       toast.success('Base de datos eliminada');
@@ -820,3 +836,4 @@ export default function BaseDesguacePage() {
     </div>
   );
 }
+

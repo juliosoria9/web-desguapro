@@ -6,7 +6,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/lib/auth-store';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL;
+const API_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/v1`;
 
 interface PiezaCSV {
   idx?: number;
@@ -253,16 +253,16 @@ export default function EditarCSVPage() {
                   />
                   <input
                     type="text"
-                    placeholder="Observaciones"
-                    value={nuevaPieza.observaciones}
-                    onChange={(e) => setNuevaPieza({...nuevaPieza, observaciones: e.target.value})}
+                    placeholder="Artículo"
+                    value={nuevaPieza.imagen}
+                    onChange={(e) => setNuevaPieza({...nuevaPieza, imagen: e.target.value})}
                     className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
                   <input
                     type="text"
                     placeholder="URL Imagen"
-                    value={nuevaPieza.imagen}
-                    onChange={(e) => setNuevaPieza({...nuevaPieza, imagen: e.target.value})}
+                    value={nuevaPieza.observaciones}
+                    onChange={(e) => setNuevaPieza({...nuevaPieza, observaciones: e.target.value})}
                     className="px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500"
                   />
                 </div>
@@ -289,7 +289,7 @@ export default function EditarCSVPage() {
                       <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">OE</th>
                       <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">IAM</th>
                       <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Precio</th>
-                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Observaciones</th>
+                      <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase w-64">Artículo</th>
                       <th className="px-3 py-3 text-left text-xs font-medium text-gray-500 uppercase">Imagen</th>
                       <th className="px-3 py-3 text-center text-xs font-medium text-gray-500 uppercase">Acciones</th>
                     </tr>
@@ -321,10 +321,10 @@ export default function EditarCSVPage() {
                                 <input type="text" value={piezaEditando.precio} onChange={(e) => setPiezaEditando({...piezaEditando, precio: e.target.value})} className="w-24 px-2 py-1 border rounded text-sm" />
                               </td>
                               <td className="px-2 py-1">
-                                <input type="text" value={piezaEditando.observaciones} onChange={(e) => setPiezaEditando({...piezaEditando, observaciones: e.target.value})} className="w-full px-2 py-1 border rounded text-sm" />
+                                <input type="text" value={piezaEditando.imagen} onChange={(e) => setPiezaEditando({...piezaEditando, imagen: e.target.value})} className="w-full px-2 py-1 border rounded text-sm" placeholder="Artículo" />
                               </td>
                               <td className="px-2 py-1">
-                                <input type="text" value={piezaEditando.imagen} onChange={(e) => setPiezaEditando({...piezaEditando, imagen: e.target.value})} className="w-full px-2 py-1 border rounded text-sm" />
+                                <input type="text" value={piezaEditando.observaciones} onChange={(e) => setPiezaEditando({...piezaEditando, observaciones: e.target.value})} className="w-full px-2 py-1 border rounded text-sm" placeholder="URL imagen" />
                               </td>
                               <td className="px-2 py-1 text-center">
                                 <button onClick={guardarEdicion} className="text-green-600 hover:text-green-800 mr-2">✓</button>
@@ -338,10 +338,10 @@ export default function EditarCSVPage() {
                               <td className="px-3 py-2 text-sm text-gray-600">{pieza.oe || '-'}</td>
                               <td className="px-3 py-2 text-sm text-gray-600">{pieza.iam || '-'}</td>
                               <td className="px-3 py-2 text-sm text-gray-600">{pieza.precio || '-'}</td>
-                              <td className="px-3 py-2 text-sm text-gray-600 max-w-xs truncate" title={pieza.observaciones}>{pieza.observaciones || '-'}</td>
+                              <td className="px-3 py-2 text-sm text-gray-600 max-w-xs truncate" title={pieza.imagen}>{pieza.imagen || '-'}</td>
                               <td className="px-3 py-2">
-                                {pieza.imagen ? (
-                                  <img src={pieza.imagen} alt="" className="w-10 h-10 object-cover rounded" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
+                                {pieza.observaciones ? (
+                                  <img src={pieza.observaciones.split(',')[0]} alt="" className="w-10 h-10 object-cover rounded" onError={(e) => (e.target as HTMLImageElement).style.display = 'none'} />
                                 ) : (
                                   <span className="text-gray-400 text-xs">-</span>
                                 )}
@@ -376,3 +376,4 @@ export default function EditarCSVPage() {
     </div>
   );
 }
+

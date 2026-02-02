@@ -4,7 +4,7 @@ Router para gestionar la base de datos de piezas del desguace
 from fastapi import APIRouter, Depends, HTTPException, status, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from typing import Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import csv
 import io
 import json
@@ -36,32 +36,44 @@ CAMPOS_DISPONIBLES = [
 ]
 
 # Palabras clave para auto-detectar columnas (campo -> lista de posibles nombres)
+# NOTA: "ref.pieza" se detecta para formato combinado, NO para OEM directo
 KEYWORDS_MAPEO = {
-    "refid": ["refid", "ref_id", "referencia", "ref", "codigo", "code", "id", "sku", "reference"],
+    "refid": ["refid", "ref_id", "ref.id", "referencia", "codigo", "code", "id", "sku", "reference"],
     "oem": ["oem", "ref_oem", "refoem", "fabricante", "manufacturer"],
     "oe": ["oe", "original", "original_equipment"],
     "iam": ["iam", "aftermarket", "independent"],
     "precio": ["precio", "price", "pvp", "coste", "cost", "importe", "valor", "euro", "eur"],
     "ubicacion": ["ubicacion", "ubicación", "location", "almacen", "almacén", "estante", "posicion", "posición", "sitio"],
     "observaciones": ["observaciones", "observacion", "notas", "nota", "comentario", "comentarios", "descripcion", "descripción", "description", "obs"],
-    "articulo": ["articulo", "artículo", "nombre", "name", "pieza", "producto", "product", "denominacion", "denominación", "titulo", "título"],
+    "articulo": ["articulo", "artículo", "nombre", "name", "producto", "product", "denominacion", "denominación", "titulo", "título"],
     "marca": ["marca", "brand", "fabricante_vehiculo", "make"],
     "modelo": ["modelo", "model", "vehiculo", "vehículo"],
     "version": ["version", "versión", "variante", "motor", "motorización", "motorizacion", "año", "year"],
-    "imagen": ["imagen", "imagen1", "imagen_1", "image", "image1", "image_1", "foto", "foto1", "foto_1", "img", "img1", "img_1", "url_imagen", "picture", "photo"],
+    "imagen": ["imagen", "imagen1", "imagen_1", "image", "image1", "image_1", "foto", "foto1", "foto_1", "img", "img1", "img_1", "url_imagen", "picture", "photo", "imágenes"],
 }
 
+# Columnas que indican formato combinado OEM/OE/IAM
+COLUMNAS_FORMATO_COMBINADO = ["ref.pieza", "refpieza", "ref_pieza", "referencias"]
 
-def detectar_mapeo_automatico(columnas_csv: list) -> dict:
+
+def detectar_mapeo_automatico(columnas_csv: list) -> tuple:
     """
     Intenta detectar automáticamente qué columna del CSV corresponde a cada campo.
-    Devuelve un diccionario con el mapeo sugerido.
+    Devuelve una tupla: (mapeo_sugerido, columna_combinada o None)
     """
     mapeo_sugerido = {}
     columnas_usadas = set()
+    columna_combinada_detectada = None
     
     # Normalizar columnas CSV para comparación
     columnas_normalizadas = {col: col.lower().strip().replace(" ", "_").replace("-", "_") for col in columnas_csv}
+    
+    # Primero detectar si hay columna de formato combinado
+    for col_original, col_normalizada in columnas_normalizadas.items():
+        if col_normalizada in COLUMNAS_FORMATO_COMBINADO:
+            columna_combinada_detectada = col_original
+            columnas_usadas.add(col_original)  # Marcar como usada para que no se mapee a otro campo
+            break
     
     for campo_id, keywords in KEYWORDS_MAPEO.items():
         mejor_match = None
@@ -90,7 +102,7 @@ def detectar_mapeo_automatico(columnas_csv: list) -> dict:
         else:
             mapeo_sugerido[campo_id] = ""
     
-    return mapeo_sugerido
+    return mapeo_sugerido, columna_combinada_detectada
 
 
 def get_current_admin_or_higher(
@@ -172,10 +184,13 @@ async def analizar_csv(
         for i, fila in enumerate(filas[:3]):
             muestra.append({col: fila.get(col, '') for col in columnas})
         
-        # Detectar mapeo automático
-        mapeo_sugerido = detectar_mapeo_automatico(list(columnas))
+# Detectar mapeo automático y columna combinada
+        mapeo_sugerido, columna_combinada_detectada = detectar_mapeo_automatico(list(columnas))
         campos_detectados = sum(1 for v in mapeo_sugerido.values() if v)
         
+        # Detectar si se debe usar formato combinado automáticamente
+        usar_formato_combinado = columna_combinada_detectada is not None
+
         return {
             "archivo": file.filename,
             "encoding": encoding_usado,
@@ -186,6 +201,8 @@ async def analizar_csv(
             "campos_disponibles": CAMPOS_DISPONIBLES,
             "mapeo_sugerido": mapeo_sugerido,
             "campos_detectados": campos_detectados,
+            "formato_combinado_detectado": usar_formato_combinado,
+            "columna_combinada_detectada": columna_combinada_detectada,
         }
         
     except HTTPException:
@@ -311,6 +328,7 @@ async def subir_base_desguace(
         ).first()
         
         piezas_anteriores = {}
+        fichajes_anteriores = {}  # Guardar fechas de fichaje para preservarlas
         archivo_origen = None
         if base_anterior:
             archivo_origen = base_anterior.nombre_archivo
@@ -320,6 +338,12 @@ async def subir_base_desguace(
                 clave = p.refid or f"{p.oem}_{p.articulo}_{p.marca}_{p.modelo}"
                 if clave:
                     piezas_anteriores[clave] = p
+                    # Guardar fecha de fichaje si existe
+                    if p.fecha_fichaje or p.usuario_fichaje_id:
+                        fichajes_anteriores[clave] = {
+                            "fecha_fichaje": p.fecha_fichaje,
+                            "usuario_fichaje_id": p.usuario_fichaje_id
+                        }
         
         # Crear set de referencias del nuevo CSV
         nuevas_referencias = set()
@@ -384,34 +408,51 @@ async def subir_base_desguace(
                     version=pieza.version,
                     imagen=pieza.imagen,
                     archivo_origen=archivo_origen,
+                    fecha_fichaje=pieza.fecha_fichaje,
+                    usuario_fichaje_id=pieza.usuario_fichaje_id,
                 )
                 db.add(pieza_vendida)
                 piezas_vendidas_count += 1
         
-        # Eliminar base de datos anterior
+        # ============ LÓGICA DE UPSERT: Actualizar existentes o insertar nuevas ============
+        # Crear/actualizar base de datos
         if base_anterior:
-            db.delete(base_anterior)
-            db.flush()
+            # Actualizar metadata de la base existente
+            base_anterior.nombre_archivo = file.filename
+            base_anterior.total_piezas = len(filas)
+            base_anterior.columnas = ",".join(columnas)
+            base_anterior.mapeo_columnas = json.dumps(mapeo_dict)
+            base_anterior.subido_por_id = usuario_actual.id
+            base_anterior.fecha_subida = datetime.now(timezone.utc)
+            base_desguace = base_anterior
+            
+            # Crear diccionario de piezas anteriores por refid para búsqueda rápida
+            piezas_por_refid = {}
+            for p in base_anterior.piezas:
+                if p.refid:
+                    piezas_por_refid[p.refid.strip().upper()] = p
+        else:
+            # Crear nueva base de datos
+            base_desguace = BaseDesguace(
+                entorno_trabajo_id=target_entorno_id,
+                nombre_archivo=file.filename,
+                total_piezas=len(filas),
+                columnas=",".join(columnas),
+                mapeo_columnas=json.dumps(mapeo_dict),
+                subido_por_id=usuario_actual.id,
+            )
+            db.add(base_desguace)
+            db.flush()  # Obtener ID
+            piezas_por_refid = {}
         
-        # Crear nueva base de datos
-        nueva_base = BaseDesguace(
-            entorno_trabajo_id=target_entorno_id,
-            nombre_archivo=file.filename,
-            total_piezas=len(filas),
-            columnas=",".join(columnas),
-            mapeo_columnas=json.dumps(mapeo_dict),
-            subido_por_id=usuario_actual.id,
-        )
-        db.add(nueva_base)
-        db.flush()  # Obtener ID
-        
-        # Insertar piezas usando el mapeo
+        # Procesar piezas: actualizar existentes o insertar nuevas
         piezas_insertadas = 0
+        piezas_actualizadas = 0
+        refids_procesados = set()  # Para eliminar piezas que ya no están
+        
         for fila in filas:
             try:
-                pieza_data = {
-                    "base_desguace_id": nueva_base.id,
-                }
+                pieza_data = {}
                 
                 # Si se usa formato combinado, procesar primero la columna combinada
                 if usar_formato_combinado and columna_combinada in fila:
@@ -447,14 +488,62 @@ async def subir_base_desguace(
                         
                         pieza_data[campo] = valor
                 
-                # Crear pieza
-                pieza = PiezaDesguace(**pieza_data)
-                db.add(pieza)
-                piezas_insertadas += 1
+                # Obtener refid para buscar si existe
+                refid = pieza_data.get("refid")
+                if not refid:
+                    # Sin refid, no podemos hacer upsert - insertar como nueva
+                    pieza_data["base_desguace_id"] = base_desguace.id
+                    # Preservar fichaje si existe
+                    clave_pieza = f"{pieza_data.get('oem', '')}_{pieza_data.get('articulo', '')}_{pieza_data.get('marca', '')}_{pieza_data.get('modelo', '')}"
+                    if clave_pieza in fichajes_anteriores:
+                        pieza_data["fecha_fichaje"] = fichajes_anteriores[clave_pieza]["fecha_fichaje"]
+                        pieza_data["usuario_fichaje_id"] = fichajes_anteriores[clave_pieza]["usuario_fichaje_id"]
+                    pieza = PiezaDesguace(**pieza_data)
+                    db.add(pieza)
+                    piezas_insertadas += 1
+                    continue
+                
+                refid_upper = refid.strip().upper()
+                refids_procesados.add(refid_upper)
+                
+                # Buscar si ya existe
+                pieza_existente = piezas_por_refid.get(refid_upper)
+                
+                if pieza_existente:
+                    # ACTUALIZAR pieza existente - solo campos que cambiaron
+                    campos_actualizables = ["oem", "oe", "iam", "precio", "ubicacion", 
+                                           "observaciones", "articulo", "marca", "modelo", 
+                                           "version", "imagen"]
+                    hubo_cambios = False
+                    for campo in campos_actualizables:
+                        nuevo_valor = pieza_data.get(campo)
+                        valor_actual = getattr(pieza_existente, campo, None)
+                        if nuevo_valor != valor_actual:
+                            setattr(pieza_existente, campo, nuevo_valor)
+                            hubo_cambios = True
+                    
+                    if hubo_cambios:
+                        piezas_actualizadas += 1
+                else:
+                    # INSERTAR nueva pieza
+                    pieza_data["base_desguace_id"] = base_desguace.id
+                    # Preservar fichaje si existe
+                    if refid in fichajes_anteriores:
+                        pieza_data["fecha_fichaje"] = fichajes_anteriores[refid]["fecha_fichaje"]
+                        pieza_data["usuario_fichaje_id"] = fichajes_anteriores[refid]["usuario_fichaje_id"]
+                    pieza = PiezaDesguace(**pieza_data)
+                    db.add(pieza)
+                    piezas_insertadas += 1
                 
             except Exception as e:
                 logger.warning(f"Error procesando fila: {e}")
                 continue
+        
+        # Eliminar piezas que ya no están en el CSV (ya fueron movidas a vendidas arriba)
+        if base_anterior:
+            for clave, pieza in piezas_anteriores.items():
+                if clave not in nuevas_referencias:
+                    db.delete(pieza)
         
         # ============ VERIFICAR FICHADAS Y GUARDAR EN TABLA SEPARADA ============
         # Buscar TODAS las fichadas de este entorno (no solo las pendientes)
@@ -464,6 +553,14 @@ async def subir_base_desguace(
         
         # Convertir nuevas_referencias a set de mayúsculas para búsqueda rápida
         referencias_upper = {ref.upper() for ref in nuevas_referencias if ref}
+        
+        # Crear diccionario de fichadas por refid para actualizar piezas
+        fichadas_por_refid = {}
+        for fichada in todas_fichadas:
+            refid_upper = fichada.id_pieza.strip().upper()
+            # Guardar la fichada más reciente si hay múltiples
+            if refid_upper not in fichadas_por_refid or fichada.fecha_fichada > fichadas_por_refid[refid_upper].fecha_fichada:
+                fichadas_por_refid[refid_upper] = fichada
         
         fichadas_verificadas = 0
         fichadas_encontradas = 0
@@ -487,14 +584,27 @@ async def subir_base_desguace(
             if pieza_encontrada:
                 fichadas_encontradas += 1
         
+        # ============ ACTUALIZAR PIEZAS CON DATOS DE FICHAJE ============
+        # Buscar piezas que coincidan con fichadas y actualizar fecha_fichaje y usuario_fichaje_id
+        piezas_actualizadas_fichaje = 0
+        for pieza in db.query(PiezaDesguace).filter(PiezaDesguace.base_desguace_id == base_desguace.id).all():
+            if pieza.refid:
+                refid_upper = pieza.refid.strip().upper()
+                if refid_upper in fichadas_por_refid:
+                    fichada = fichadas_por_refid[refid_upper]
+                    pieza.fecha_fichaje = fichada.fecha_fichada
+                    pieza.usuario_fichaje_id = fichada.usuario_id
+                    piezas_actualizadas_fichaje += 1
+        
         db.commit()
         
-        logger.info(f"Base de desguace subida: {file.filename} ({piezas_insertadas} piezas, {piezas_vendidas_count} vendidas, {fichadas_verificadas} fichadas verificadas, {fichadas_encontradas} encontradas) por {usuario_actual.email}" + (f" [Formato combinado: {columna_combinada}]" if usar_formato_combinado else ""))
+        logger.info(f"Base de desguace subida: {file.filename} ({piezas_insertadas} nuevas, {piezas_actualizadas} actualizadas, {piezas_vendidas_count} vendidas, {fichadas_verificadas} fichadas verificadas, {fichadas_encontradas} encontradas, {piezas_actualizadas_fichaje} con datos de fichaje) por {usuario_actual.email}" + (f" [Formato combinado: {columna_combinada}]" if usar_formato_combinado else ""))
         
         return {
             "message": "Base de datos subida correctamente",
             "archivo": file.filename,
             "piezas_insertadas": piezas_insertadas,
+            "piezas_actualizadas": piezas_actualizadas,
             "piezas_vendidas": piezas_vendidas_count,
             "fichadas_verificadas": fichadas_verificadas,
             "fichadas_encontradas": fichadas_encontradas,
@@ -756,14 +866,35 @@ async def obtener_ventas(
             except:
                 pass
         
-        # Contar total
+        # Contar total y sumar valor
         total = query.count()
+        
+        # Calcular valor total de todas las piezas filtradas (no solo la página)
+        from sqlalchemy import func
+        valor_total = db.query(func.sum(PiezaVendida.precio)).filter(
+            PiezaVendida.id.in_(query.with_entities(PiezaVendida.id).subquery())
+        ).scalar() or 0
         
         # Ordenar por fecha de venta (más recientes primero) y paginar
         ventas = query.order_by(PiezaVendida.fecha_venta.desc()).offset(offset).limit(limit).all()
         
+        # Obtener información de usuarios que ficharon
+        usuarios_fichaje = {}
+        usuario_ids = [v.usuario_fichaje_id for v in ventas if v.usuario_fichaje_id]
+        if usuario_ids:
+            usuarios = db.query(Usuario).filter(Usuario.id.in_(usuario_ids)).all()
+            usuarios_fichaje = {u.id: (u.nombre or u.email) for u in usuarios}
+        
         resultados = []
         for v in ventas:
+            # Calcular días de rotación (desde fichaje o creación hasta venta)
+            dias_rotacion = None
+            if v.fecha_venta:
+                fecha_entrada = v.fecha_fichaje  # Prioridad al fichaje
+                if fecha_entrada and v.fecha_venta:
+                    delta = v.fecha_venta - fecha_entrada
+                    dias_rotacion = delta.days
+            
             resultados.append({
                 "id": v.id,
                 "refid": v.refid,
@@ -780,11 +911,15 @@ async def obtener_ventas(
                 "imagen": v.imagen,
                 "fecha_venta": v.fecha_venta.isoformat() if v.fecha_venta else None,
                 "archivo_origen": v.archivo_origen,
+                "fecha_fichaje": v.fecha_fichaje.isoformat() if v.fecha_fichaje else None,
+                "usuario_fichaje": usuarios_fichaje.get(v.usuario_fichaje_id) if v.usuario_fichaje_id else None,
+                "dias_rotacion": dias_rotacion,
             })
         
         return {
             "ventas": resultados,
             "total": total,
+            "valor_total": float(valor_total) if valor_total else 0,
             "limit": limit,
             "offset": offset,
         }
@@ -971,6 +1106,13 @@ async def obtener_stock(
         # Ordenar y paginar
         piezas = query.order_by(PiezaDesguace.id.desc()).offset(offset).limit(limit).all()
         
+        # Obtener información de usuarios que ficharon
+        usuarios_fichaje = {}
+        usuario_ids = [p.usuario_fichaje_id for p in piezas if p.usuario_fichaje_id]
+        if usuario_ids:
+            usuarios = db.query(Usuario).filter(Usuario.id.in_(usuario_ids)).all()
+            usuarios_fichaje = {u.id: (u.nombre or u.email) for u in usuarios}
+        
         resultados = []
         for p in piezas:
             resultados.append({
@@ -988,6 +1130,8 @@ async def obtener_stock(
                 "version": p.version,
                 "imagen": p.imagen,
                 "fecha_creacion": p.fecha_creacion.isoformat() if p.fecha_creacion else None,
+                "fecha_fichaje": p.fecha_fichaje.isoformat() if p.fecha_fichaje else None,
+                "usuario_fichaje": usuarios_fichaje.get(p.usuario_fichaje_id) if p.usuario_fichaje_id else None,
             })
         
         return {

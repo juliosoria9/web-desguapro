@@ -124,7 +124,7 @@ export default function SistemaPage() {
   const cargarFiltros = async () => {
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/admin/audit-logs/acciones`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/admin/audit-logs/acciones`,
         { withCredentials: true }
       );
       setAccionesDisponibles(response.data.acciones);
@@ -137,7 +137,7 @@ export default function SistemaPage() {
   const cargarLogs = async () => {
     setCargandoLogs(true);
     try {
-      let url = `${process.env.NEXT_PUBLIC_API_URL}/admin/audit-logs?pagina=${paginaLogs}&por_pagina=50`;
+      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/admin/audit-logs?pagina=${paginaLogs}&por_pagina=50`;
       if (filtroAccion) url += `&accion=${filtroAccion}`;
       if (filtroEntidad) url += `&entidad=${filtroEntidad}`;
       
@@ -156,7 +156,7 @@ export default function SistemaPage() {
     setCargandoBackups(true);
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/admin/backups`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/admin/backups`,
         { withCredentials: true }
       );
       setBackups(response.data.backups);
@@ -173,7 +173,7 @@ export default function SistemaPage() {
     setCreandoBackup(true);
     try {
       const response = await axios.post(
-        `${process.env.NEXT_PUBLIC_API_URL}/admin/backups/crear`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/admin/backups/crear`,
         {},
         { withCredentials: true }
       );
@@ -548,3 +548,4 @@ export default function SistemaPage() {
     </div>
   );
 }
+

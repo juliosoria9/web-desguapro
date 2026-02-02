@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import { useAuthStore } from '../lib/auth-store';
 import ProtectedRoute from '../components/ProtectedRoute';
@@ -14,34 +14,38 @@ interface FichadaResponse {
 export default function EscanerPage() {
   const router = useRouter();
   const { token, user } = useAuthStore();
-  const videoRef = useRef<HTMLVideoElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const scannerRef = useRef<any>(null);
+  const scannerContainerRef = useRef<HTMLDivElement>(null);
   
-  const [scanning, setScanning] = useState(false);
   const [codigoManual, setCodigoManual] = useState('');
   const [descripcion, setDescripcion] = useState('');
   const [mensaje, setMensaje] = useState<{ tipo: 'success' | 'error'; texto: string } | null>(null);
   const [ultimasFichadas, setUltimasFichadas] = useState<FichadaResponse[]>([]);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [usandoCamara, setUsandoCamara] = useState(false);
+  const [enviando, setEnviando] = useState(false);
+  const [scannerListo, setScannerListo] = useState(false);
 
   // Registrar fichada
-  const registrarFichada = async (codigo: string) => {
+  const registrarFichada = useCallback(async (codigo: string) => {
+    if (enviando) return;
     if (!codigo.trim()) {
       setMensaje({ tipo: 'error', texto: 'El código no puede estar vacío' });
       return;
     }
 
+    setEnviando(true);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/fichadas/registrar`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000'}/api/v1/fichadas/registrar`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`
         },
+        credentials: 'include',
         body: JSON.stringify({
           id_pieza: codigo.trim().toUpperCase(),
-          descripcion: descripcion || 'Fichada por escáner'
+          descripcion: descripcion.trim() || null
         })
       });
 
@@ -53,116 +57,107 @@ export default function EscanerPage() {
         setCodigoManual('');
         setDescripcion('');
         
-        // Vibrar si está disponible
         if (navigator.vibrate) {
           navigator.vibrate(200);
         }
         
-        // Limpiar mensaje después de 3 segundos
         setTimeout(() => setMensaje(null), 3000);
       } else {
         setMensaje({ tipo: 'error', texto: data.detail || 'Error al fichar' });
       }
     } catch (error) {
       setMensaje({ tipo: 'error', texto: 'Error de conexión' });
+    } finally {
+      setEnviando(false);
     }
-  };
+  }, [enviando, token, descripcion]);
 
-  // Iniciar cámara para escaneo
+  // Detener cámara
+  const detenerCamara = useCallback(async () => {
+    if (scannerRef.current) {
+      try {
+        await scannerRef.current.stop();
+        scannerRef.current.clear();
+      } catch (e) {
+        console.log('Error deteniendo scanner:', e);
+      }
+      scannerRef.current = null;
+    }
+    setUsandoCamara(false);
+    setScannerListo(false);
+  }, []);
+
+  // Iniciar cámara con html5-qrcode
   const iniciarCamara = async () => {
     try {
       setCameraError(null);
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment' } // Cámara trasera
-      });
+      setUsandoCamara(true); // Mostrar contenedor primero
       
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        videoRef.current.play();
-        setUsandoCamara(true);
-        setScanning(true);
-      }
-    } catch (error: any) {
-      setCameraError(
-        error.name === 'NotAllowedError' 
-          ? 'Permiso de cámara denegado. Usa entrada manual.' 
-          : 'No se pudo acceder a la cámara'
-      );
-    }
-  };
-
-  // Detener cámara
-  const detenerCamara = () => {
-    if (videoRef.current?.srcObject) {
-      const tracks = (videoRef.current.srcObject as MediaStream).getTracks();
-      tracks.forEach(track => track.stop());
-      videoRef.current.srcObject = null;
-    }
-    setUsandoCamara(false);
-    setScanning(false);
-  };
-
-  // Escanear frame del video buscando código de barras
-  useEffect(() => {
-    if (!scanning || !usandoCamara) return;
-
-    let animationId: number;
-    let lastScan = 0;
-
-    const scanFrame = async () => {
-      if (!videoRef.current || !canvasRef.current) return;
+      // Pequeño delay para que el DOM se actualice
+      await new Promise(resolve => setTimeout(resolve, 100));
       
-      const now = Date.now();
-      if (now - lastScan < 500) { // Escanear cada 500ms
-        animationId = requestAnimationFrame(scanFrame);
-        return;
-      }
-      lastScan = now;
-
-      const video = videoRef.current;
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext('2d');
+      // Importar dinámicamente para evitar SSR issues
+      const { Html5Qrcode } = await import('html5-qrcode');
       
-      if (ctx && video.readyState === video.HAVE_ENOUGH_DATA) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-        ctx.drawImage(video, 0, 0);
+      // Crear instancia del scanner
+      const html5QrCode = new Html5Qrcode("scanner-container");
+      scannerRef.current = html5QrCode;
+      
+      // Configuración del scanner - mostrar video completo
+      const config = {
+        fps: 10,
+        qrbox: { width: 250, height: 80 },
+        aspectRatio: 1.5,
+        showTorchButtonIfSupported: true,
+        showZoomSliderIfSupported: true,
+        defaultZoomValueIfSupported: 2,
+      };
+      
+      // Callback cuando se detecta un código
+      const onScanSuccess = (decodedText: string) => {
+        console.log('Código detectado:', decodedText);
         
-        // Usar BarcodeDetector si está disponible (Chrome, Edge)
-        if ('BarcodeDetector' in window) {
-          try {
-            // @ts-ignore
-            const barcodeDetector = new BarcodeDetector({
-              formats: ['code_128', 'code_39', 'ean_13', 'ean_8', 'qr_code', 'upc_a', 'upc_e']
-            });
-            const barcodes = await barcodeDetector.detect(canvas);
-            
-            if (barcodes.length > 0) {
-              const codigo = barcodes[0].rawValue;
-              detenerCamara();
-              setCodigoManual(codigo);
-              registrarFichada(codigo);
-              return;
-            }
-          } catch (e) {
-            console.log('BarcodeDetector error:', e);
-          }
+        // Vibrar
+        if (navigator.vibrate) {
+          navigator.vibrate([100, 50, 100]);
         }
-      }
+        
+        // Detener scanner y registrar
+        detenerCamara();
+        setCodigoManual(decodedText.toUpperCase());
+        registrarFichada(decodedText);
+      };
       
-      animationId = requestAnimationFrame(scanFrame);
-    };
-
-    animationId = requestAnimationFrame(scanFrame);
-    
-    return () => {
-      if (animationId) cancelAnimationFrame(animationId);
-    };
-  }, [scanning, usandoCamara]);
+      // Iniciar con cámara trasera
+      await html5QrCode.start(
+        { facingMode: "environment" },
+        config,
+        onScanSuccess,
+        () => {} // Ignorar errores de frames sin código
+      );
+      
+      setScannerListo(true);
+      
+    } catch (error: any) {
+      console.error('Error iniciando cámara:', error);
+      setUsandoCamara(false);
+      if (error.message?.includes('Permission') || error.name === 'NotAllowedError') {
+        setCameraError('Permiso de cámara denegado. Permite el acceso a la cámara o usa entrada manual.');
+      } else if (error.message?.includes('NotFound') || error.name === 'NotFoundError') {
+        setCameraError('No se encontró cámara en el dispositivo.');
+      } else {
+        setCameraError(`Error: ${error.message || 'No se pudo acceder a la cámara'}`);
+      }
+    }
+  };
 
   // Limpiar al desmontar
   useEffect(() => {
-    return () => detenerCamara();
+    return () => {
+      if (scannerRef.current) {
+        scannerRef.current.stop().catch(() => {});
+      }
+    };
   }, []);
 
   return (
@@ -219,27 +214,33 @@ export default function EscanerPage() {
             
             {usandoCamara ? (
               <div className="relative">
-                <video
-                  ref={videoRef}
-                  className="w-full rounded border-2 border-indigo-300"
-                  playsInline
-                  muted
+                <div 
+                  id="scanner-container" 
+                  ref={scannerContainerRef}
+                  className="w-full rounded overflow-hidden bg-black"
+                  style={{ minHeight: '300px' }}
                 />
-                <canvas ref={canvasRef} className="hidden" />
-                <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                  <div className="border-2 border-red-500 w-3/4 h-16 rounded opacity-50" />
-                </div>
+                <style jsx global>{`
+                  #scanner-container video {
+                    width: 100% !important;
+                    height: auto !important;
+                    border-radius: 8px;
+                  }
+                  #scanner-container #qr-shaded-region {
+                    border-width: 2px !important;
+                  }
+                `}</style>
+                {scannerListo && (
+                  <div className="text-center text-sm text-green-600 mt-2 bg-green-50 p-2 rounded">
+                    ✅ Cámara activa - Apunta al código de barras
+                  </div>
+                )}
                 <button
                   onClick={detenerCamara}
                   className="mt-3 w-full bg-red-500 text-white py-2 rounded hover:bg-red-600"
                 >
                   ⏹ Detener cámara
                 </button>
-                {!('BarcodeDetector' in window) && (
-                  <p className="text-xs text-gray-500 mt-2 text-center">
-                    Tu navegador no soporta detección automática. Usa Chrome o Edge para escaneo automático.
-                  </p>
-                )}
               </div>
             ) : (
               <button
@@ -279,10 +280,10 @@ export default function EscanerPage() {
             
             <button
               onClick={() => registrarFichada(codigoManual)}
-              disabled={!codigoManual.trim()}
+              disabled={!codigoManual.trim() || enviando}
               className="w-full bg-green-500 text-white py-3 rounded-lg hover:bg-green-600 disabled:bg-gray-300 disabled:cursor-not-allowed font-medium"
             >
-              ✓ Fichar pieza
+              {enviando ? 'Fichando...' : '✓ Fichar pieza'}
             </button>
           </div>
 
@@ -320,3 +321,4 @@ export default function EscanerPage() {
     </ProtectedRoute>
   );
 }
+

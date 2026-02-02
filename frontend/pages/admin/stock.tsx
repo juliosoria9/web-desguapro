@@ -21,6 +21,8 @@ interface PiezaStock {
   version: string | null;
   imagen: string | null;
   fecha_creacion: string | null;
+  fecha_fichaje: string | null;
+  usuario_fichaje: string | null;
 }
 
 interface Resumen {
@@ -95,7 +97,7 @@ export default function StockPage() {
   const fetchEmpresas = async () => {
     try {
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/entornos`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/entornos`,
         { withCredentials: true }
       );
       setEmpresas(response.data || []);
@@ -117,7 +119,7 @@ export default function StockPage() {
       
       // Fetch piezas en stock
       const stockRes = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/desguace/stock?${queryString}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/stock?${queryString}`,
         { withCredentials: true }
       );
       setPiezas(stockRes.data.piezas || []);
@@ -126,7 +128,7 @@ export default function StockPage() {
       // Fetch resumen
       const resumenParams = selectedEmpresa ? `?entorno_id=${selectedEmpresa}` : '';
       const resumenRes = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/desguace/stock/resumen${resumenParams}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/stock/resumen${resumenParams}`,
         { withCredentials: true }
       );
       setResumen(resumenRes.data);
@@ -179,7 +181,7 @@ export default function StockPage() {
       queryParams.append('offset', '0');
       
       const response = await axios.get(
-        `${process.env.NEXT_PUBLIC_API_URL}/desguace/stock?${queryParams.toString()}`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/stock?${queryParams.toString()}`,
         { withCredentials: true }
       );
       
@@ -190,9 +192,11 @@ export default function StockPage() {
       }
       
       // Crear CSV
-      const headers = ['Ref ID', 'Artículo', 'OEM', 'OE', 'IAM', 'Marca', 'Modelo', 'Versión', 'Precio', 'Ubicación', 'Observaciones'];
+      const headers = ['Ref ID', 'Fecha Entrada', 'Fichado por', 'Artículo', 'OEM', 'OE', 'IAM', 'Marca', 'Modelo', 'Versión', 'Precio', 'Ubicación', 'Observaciones'];
       const rows = datos.map((p: PiezaStock) => [
         p.refid || '',
+        p.fecha_fichaje ? new Date(p.fecha_fichaje).toLocaleDateString('es-ES') : (p.fecha_creacion ? new Date(p.fecha_creacion).toLocaleDateString('es-ES') : ''),
+        p.usuario_fichaje || '',
         p.articulo || '',
         p.oem || '',
         p.oe || '',
@@ -593,6 +597,7 @@ export default function StockPage() {
                       <thead className="bg-gray-50">
                         <tr>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Imagen</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Entrada</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Ref ID</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Artículo</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">OEM</th>
@@ -628,6 +633,12 @@ export default function StockPage() {
                                     <path strokeLinecap="round" strokeLinejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
                                   </svg>
                                 </div>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-xs text-gray-600">
+                              <div>{pieza.fecha_fichaje ? new Date(pieza.fecha_fichaje).toLocaleDateString('es-ES') : (pieza.fecha_creacion ? new Date(pieza.fecha_creacion).toLocaleDateString('es-ES') : '-')}</div>
+                              {pieza.usuario_fichaje && (
+                                <div className="text-gray-400 truncate max-w-[80px]" title={pieza.usuario_fichaje}>{pieza.usuario_fichaje}</div>
                               )}
                             </td>
                             <td className="px-4 py-3">
@@ -677,11 +688,11 @@ export default function StockPage() {
 
                 {/* Paginación */}
                 {total > limit && (
-                  <div className="p-4 border-t flex justify-between items-center">
+                  <div className="p-4 border-t flex flex-wrap justify-between items-center gap-4">
                     <p className="text-sm text-gray-500">
                       Mostrando {offset + 1} - {Math.min(offset + limit, total)} de {total.toLocaleString()}
                     </p>
-                    <div className="flex gap-2">
+                    <div className="flex items-center gap-2">
                       <button
                         onClick={() => setOffset(Math.max(0, offset - limit))}
                         disabled={offset === 0}
@@ -689,6 +700,26 @@ export default function StockPage() {
                       >
                         Anterior
                       </button>
+                      
+                      {/* Selector de página */}
+                      <div className="flex items-center gap-2">
+                        <span className="text-sm text-gray-500">Página</span>
+                        <input
+                          type="number"
+                          min={1}
+                          max={Math.ceil(total / limit)}
+                          value={Math.floor(offset / limit) + 1}
+                          onChange={(e) => {
+                            const page = parseInt(e.target.value) || 1;
+                            const maxPage = Math.ceil(total / limit);
+                            const validPage = Math.min(Math.max(1, page), maxPage);
+                            setOffset((validPage - 1) * limit);
+                          }}
+                          className="w-16 px-2 py-2 border rounded-lg text-sm text-center"
+                        />
+                        <span className="text-sm text-gray-500">de {Math.ceil(total / limit).toLocaleString()}</span>
+                      </div>
+                      
                       <button
                         onClick={() => setOffset(offset + limit)}
                         disabled={offset + limit >= total}
@@ -882,3 +913,4 @@ export default function StockPage() {
     </div>
   );
 }
+
