@@ -72,9 +72,24 @@ export default function LoginPage() {
           <h1 className="text-4xl font-bold text-white mb-2">
             DesguaPro
           </h1>
-          <p className="text-blue-100">
-            Búsqueda de precios de piezas
+          <p className="text-blue-100 text-lg mb-4">
+            Software de Gestión para Desguaces
           </p>
+          <div className="bg-white/10 backdrop-blur-sm rounded-xl p-4 text-left max-w-lg mx-auto">
+            <p className="text-blue-50 text-sm leading-relaxed mb-3">
+              <span className="font-semibold text-white">Controla tu negocio al completo.</span>{' '}
+              Obtén precios competitivos del mercado, gestiona compras, ventas y gastos en una sola plataforma. 
+              Totalmente adaptable al software de tu desguace.
+            </p>
+            <div className="flex items-center gap-2 text-blue-200 text-xs">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-4 h-4">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+              </svg>
+              <a href="mailto:julio.soria.rodriguez@gmail.com" className="hover:text-white transition-colors">
+                julio.soria.rodriguez@gmail.com
+              </a>
+            </div>
+          </div>
         </div>
 
         {/* Formulario */}
