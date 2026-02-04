@@ -79,7 +79,8 @@ def leer_csv_stock(csv_path: str) -> Tuple[list, list]:
     filas = []
     cabeceras = []
     
-    with open(csv_path, 'r', encoding='utf-8', errors='replace') as f:
+    # Usar utf-8-sig para manejar BOM automáticamente
+    with open(csv_path, 'r', encoding='utf-8-sig', errors='replace') as f:
         # Detectar delimitador
         primera_linea = f.readline()
         f.seek(0)
@@ -89,11 +90,14 @@ def leer_csv_stock(csv_path: str) -> Tuple[list, list]:
         reader = csv.reader(f, delimiter=delimitador)
         cabeceras = next(reader)
         
-        # Limpiar cabeceras
-        cabeceras = [c.strip().lower() for c in cabeceras]
+        # Limpiar cabeceras (remover BOM residual si lo hubiera)
+        cabeceras = [c.strip().lower().lstrip('\ufeff') for c in cabeceras]
         
         for fila in reader:
             if len(fila) >= len(cabeceras) / 2:  # Al menos la mitad de columnas
+                # Limpiar BOM del primer valor si existe
+                if fila and fila[0]:
+                    fila[0] = fila[0].lstrip('\ufeff')
                 filas.append(fila)
     
     return cabeceras, filas
