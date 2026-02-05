@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useAuthStore } from '@/lib/auth-store';
+import ModuloProtegido from '@/components/ModuloProtegido';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -273,6 +274,7 @@ export default function EstudioCochesPage() {
   }
 
   return (
+    <ModuloProtegido modulo="estudio_coches">
     <div className="min-h-screen bg-gray-50">
       {/* Navbar */}
       <nav className="bg-white shadow-lg">
@@ -689,5 +691,6 @@ export default function EstudioCochesPage() {
         )}
       </main>
     </div>
+    </ModuloProtegido>
   );
 }

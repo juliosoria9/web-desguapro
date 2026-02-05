@@ -305,6 +305,39 @@ SELECT * FROM entornos_trabajo;
 
 ## 🚀 Features Implementadas Recientemente
 
+### Sistema de Módulos por Empresa (2026-02-05)
+Control de funcionalidades por entorno de trabajo. Permite ofrecer diferentes paquetes de suscripción.
+
+**Documentación completa:** `docs/SISTEMA_MODULOS.md`
+
+**Módulos disponibles:**
+- `fichadas`, `stock_masivo`, `referencias`, `piezas_nuevas`
+- `ventas`, `precios_sugeridos`, `importacion_csv`
+- `inventario_piezas`, `estudio_coches`
+
+**Archivos clave:**
+- `backend/app/models/busqueda.py` - Columnas modulo_* en EntornoTrabajo
+- `frontend/lib/auth-store.ts` - Interface Modulos, hasModulo()
+- `frontend/components/ModuloProtegido.tsx` - Componente wrapper
+
+**Uso:**
+```tsx
+// En dashboard.tsx - ocultar tarjeta
+{hasModulo('fichadas') && <TarjetaFichadas />}
+
+// En página - proteger acceso
+<ModuloProtegido modulo="inventario_piezas">
+  <ContenidoPagina />
+</ModuloProtegido>
+```
+
+**⚠️ IMPORTANTE:** Los módulos se cargan en el JWT al hacer login. Si se cambian módulos, el usuario debe re-loguearse.
+
+### Verificación de Fichadas (2026-02-05)
+Las piezas fichadas muestran ✓/✗ indicando si entraron al stock.
+- Piezas < 1 día: verificación en tiempo real
+- Piezas ≥ 1 día: usa verificación guardada
+
 ### Contador OEM en Burbujas (2026-02-02)
 Las burbujas azules en las imágenes de piezas ahora muestran la cantidad de piezas con el mismo OEM, no el número de fotos.
 
@@ -348,4 +381,4 @@ ssh root@72.61.98.80 "cd /var/www/motocoche && git pull origin main && sudo syst
 
 ---
 
-**Última actualización:** 4 de Febrero de 2026
+**Última actualización:** 5 de Febrero de 2026

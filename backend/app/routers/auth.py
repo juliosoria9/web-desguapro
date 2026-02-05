@@ -14,7 +14,7 @@ from app.config import settings
 from app.models.busqueda import Usuario, EntornoTrabajo, Busqueda
 from app.schemas.auth import (
     LoginRequest, LoginResponse, UsuarioCreate, UsuarioResponse,
-    UsuarioListResponse, EntornoTrabajoCreate, EntornoTrabajoResponse
+    UsuarioListResponse, EntornoTrabajoCreate, EntornoTrabajoResponse, EntornoModulosUpdate
 )
 from app.dependencies import get_current_user, get_current_owner, get_current_admin, get_current_sysowner
 from utils.security import (
@@ -68,12 +68,25 @@ async def login(request: LoginRequest, req: Request, db: Session = Depends(get_d
         
         # Obtener nombre del entorno
         entorno_nombre = None
+        modulos = None
         if usuario.entorno_trabajo_id:
             entorno = db.query(EntornoTrabajo).filter(EntornoTrabajo.id == usuario.entorno_trabajo_id).first()
             if entorno:
                 entorno_nombre = entorno.nombre
+                # Incluir módulos activos
+                modulos = {
+                    "fichadas": entorno.modulo_fichadas if entorno.modulo_fichadas is not None else True,
+                    "stock_masivo": entorno.modulo_stock_masivo if entorno.modulo_stock_masivo is not None else True,
+                    "referencias": entorno.modulo_referencias if entorno.modulo_referencias is not None else True,
+                    "piezas_nuevas": entorno.modulo_piezas_nuevas if entorno.modulo_piezas_nuevas is not None else True,
+                    "ventas": entorno.modulo_ventas if entorno.modulo_ventas is not None else True,
+                    "precios_sugeridos": entorno.modulo_precios_sugeridos if entorno.modulo_precios_sugeridos is not None else True,
+                    "importacion_csv": entorno.modulo_importacion_csv if entorno.modulo_importacion_csv is not None else True,
+                    "inventario_piezas": entorno.modulo_inventario_piezas if hasattr(entorno, 'modulo_inventario_piezas') and entorno.modulo_inventario_piezas is not None else True,
+                    "estudio_coches": entorno.modulo_estudio_coches if hasattr(entorno, 'modulo_estudio_coches') and entorno.modulo_estudio_coches is not None else True,
+                }
         
-        # Crear response con entorno_nombre
+        # Crear response con entorno_nombre y módulos
         usuario_response = UsuarioResponse(
             id=usuario.id,
             email=usuario.email,
@@ -83,6 +96,7 @@ async def login(request: LoginRequest, req: Request, db: Session = Depends(get_d
             entorno_trabajo_id=usuario.entorno_trabajo_id,
             entorno_nombre=entorno_nombre,
             fecha_creacion=usuario.fecha_creacion,
+            modulos=modulos,
         )
         
         # Crear respuesta con cookie HTTPOnly
@@ -625,6 +639,59 @@ async def eliminar_entorno(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Error al eliminar entorno",
+        )
+
+
+@router.put("/entornos/{entorno_id}/modulos", response_model=EntornoTrabajoResponse)
+async def actualizar_modulos_entorno(
+    entorno_id: int,
+    modulos: EntornoModulosUpdate,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_sysowner)
+):
+    """Actualizar módulos activos de un entorno de trabajo (solo SYSOWNER)"""
+    try:
+        entorno = db.query(EntornoTrabajo).filter(EntornoTrabajo.id == entorno_id).first()
+        if not entorno:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Entorno no encontrado",
+            )
+        
+        # Actualizar solo los módulos que se envíen
+        if modulos.modulo_fichadas is not None:
+            entorno.modulo_fichadas = modulos.modulo_fichadas
+        if modulos.modulo_stock_masivo is not None:
+            entorno.modulo_stock_masivo = modulos.modulo_stock_masivo
+        if modulos.modulo_referencias is not None:
+            entorno.modulo_referencias = modulos.modulo_referencias
+        if modulos.modulo_piezas_nuevas is not None:
+            entorno.modulo_piezas_nuevas = modulos.modulo_piezas_nuevas
+        if modulos.modulo_ventas is not None:
+            entorno.modulo_ventas = modulos.modulo_ventas
+        if modulos.modulo_precios_sugeridos is not None:
+            entorno.modulo_precios_sugeridos = modulos.modulo_precios_sugeridos
+        if modulos.modulo_importacion_csv is not None:
+            entorno.modulo_importacion_csv = modulos.modulo_importacion_csv
+        if modulos.modulo_inventario_piezas is not None:
+            entorno.modulo_inventario_piezas = modulos.modulo_inventario_piezas
+        if modulos.modulo_estudio_coches is not None:
+            entorno.modulo_estudio_coches = modulos.modulo_estudio_coches
+        
+        db.commit()
+        db.refresh(entorno)
+        
+        logger.info(f"Módulos actualizados para entorno {entorno.nombre} por {usuario_actual.email}")
+        return EntornoTrabajoResponse.model_validate(entorno)
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error actualizando módulos: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al actualizar módulos",
         )
 
 

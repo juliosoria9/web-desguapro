@@ -1,6 +1,18 @@
 import { create } from 'zustand';
 import axios from 'axios';
 
+export interface Modulos {
+  fichadas: boolean;
+  stock_masivo: boolean;
+  referencias: boolean;
+  piezas_nuevas: boolean;
+  ventas: boolean;
+  precios_sugeridos: boolean;
+  importacion_csv: boolean;
+  inventario_piezas: boolean;
+  estudio_coches: boolean;
+}
+
 export interface User {
   id: number;
   email: string;
@@ -8,6 +20,7 @@ export interface User {
   rol: string;  // owner, admin, user
   entorno_trabajo_id?: number;
   entorno_nombre?: string;
+  modulos?: Modulos;
 }
 
 interface AuthStore {
@@ -18,7 +31,21 @@ interface AuthStore {
   setAuth: (user: User, token?: string) => void;
   logout: () => Promise<void>;
   loadFromStorage: () => void;
+  hasModulo: (modulo: keyof Modulos) => boolean;
 }
+
+// Módulos por defecto (todos activos)
+const defaultModulos: Modulos = {
+  fichadas: true,
+  stock_masivo: true,
+  referencias: true,
+  piezas_nuevas: true,
+  ventas: true,
+  precios_sugeridos: true,
+  importacion_csv: true,
+  inventario_piezas: true,
+  estudio_coches: true,
+};
 
 // Normaliza el rol a minúsculas
 const normalizeUser = (user: any): User => ({
@@ -28,9 +55,10 @@ const normalizeUser = (user: any): User => ({
   rol: String(user.rol).toLowerCase(),
   entorno_trabajo_id: user.entorno_trabajo_id,
   entorno_nombre: user.entorno_nombre,
+  modulos: user.modulos || defaultModulos,
 });
 
-export const useAuthStore = create<AuthStore>((set) => ({
+export const useAuthStore = create<AuthStore>((set, get) => ({
   user: null,
   token: null,
   isAuthenticated: false,
@@ -95,5 +123,14 @@ export const useAuthStore = create<AuthStore>((set) => ({
         }
       }
     }
+  },
+
+  hasModulo: (modulo: keyof Modulos): boolean => {
+    const { user } = get();
+    // sysowner siempre tiene acceso a todo
+    if (user?.rol === 'sysowner') return true;
+    // Si no hay usuario o no hay módulos definidos, usar defaults (true)
+    if (!user?.modulos) return true;
+    return user.modulos[modulo] ?? true;
   },
 }));

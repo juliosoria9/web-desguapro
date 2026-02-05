@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useAuthStore } from '@/lib/auth-store';
+import ModuloProtegido from '@/components/ModuloProtegido';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -45,6 +46,7 @@ interface MiFichada {
   comentario: string | null;
   fecha_fichada: string;
   usuario_email: string;
+  en_stock: boolean | null;  // null=no verificado, true=entró, false=no entró
 }
 
 interface ResumenUsuario {
@@ -89,7 +91,7 @@ const COLORES_TIEMPO: { [key: string]: string } = {
   red: 'bg-red-100 border-red-300 text-red-700',
 };
 
-export default function FichadasPage() {
+function FichadasContent() {
   const router = useRouter();
   const { user, logout, loadFromStorage } = useAuthStore();
   const [mounted, setMounted] = useState(false);
@@ -613,12 +615,30 @@ export default function FichadasPage() {
                           <div className="col-span-2 font-mono text-xs text-gray-600">
                             {new Date(fichada.fecha_fichada).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
                           </div>
-                          <div 
-                            className="col-span-3 font-mono font-medium text-blue-600 text-sm cursor-pointer hover:text-blue-800 hover:underline"
-                            onClick={() => buscarPiezaEnStock(fichada.id_pieza)}
-                            title="Ver detalle de pieza"
-                          >
-                            {cargandoPieza ? '...' : fichada.id_pieza}
+                          <div className="col-span-3 flex items-center gap-1.5">
+                            {/* Indicador de stock */}
+                            <span className="w-4 text-center" title={
+                              fichada.en_stock === null 
+                                ? 'Pendiente de verificación' 
+                                : fichada.en_stock 
+                                  ? 'Pieza encontrada en stock ✓' 
+                                  : 'Pieza NO encontrada en stock ✗'
+                            }>
+                              {fichada.en_stock === null ? (
+                                <span className="text-gray-400 text-xs">-</span>
+                              ) : fichada.en_stock ? (
+                                <span className="text-green-600 font-bold text-sm">✓</span>
+                              ) : (
+                                <span className="text-red-600 font-bold text-sm">✗</span>
+                              )}
+                            </span>
+                            <span 
+                              className="font-mono font-medium text-blue-600 text-sm cursor-pointer hover:text-blue-800 hover:underline"
+                              onClick={() => buscarPiezaEnStock(fichada.id_pieza)}
+                              title="Ver detalle de pieza"
+                            >
+                              {cargandoPieza ? '...' : fichada.id_pieza}
+                            </span>
                           </div>
                           <div className="col-span-5 flex items-center gap-2">
                             {editandoDescripcionEste ? (
@@ -1246,3 +1266,11 @@ export default function FichadasPage() {
   );
 }
 
+// Exportar componente envuelto con protección de módulo
+export default function FichadasPage() {
+  return (
+    <ModuloProtegido modulo="fichadas">
+      <FichadasContent />
+    </ModuloProtegido>
+  );
+}

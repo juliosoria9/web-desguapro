@@ -51,6 +51,17 @@ class EntornoTrabajo(Base):
     activo = Column(Boolean, default=True)
     fecha_creacion = Column(DateTime, default=now_spain_naive)  # Hora de España
     
+    # ========== MÓDULOS ACTIVABLES/DESACTIVABLES ==========
+    modulo_fichadas = Column(Boolean, default=True)  # Control de fichadas de piezas
+    modulo_stock_masivo = Column(Boolean, default=True)  # Verificación masiva de stock
+    modulo_referencias = Column(Boolean, default=True)  # Cruce de referencias OEM/IAM
+    modulo_piezas_nuevas = Column(Boolean, default=True)  # Gestión de piezas nuevas desde CSV
+    modulo_ventas = Column(Boolean, default=True)  # Historial de ventas
+    modulo_precios_sugeridos = Column(Boolean, default=True)  # Cálculo de precios sugeridos
+    modulo_importacion_csv = Column(Boolean, default=True)  # Importación automática de CSV
+    modulo_inventario_piezas = Column(Boolean, default=True)  # Inventario de piezas (stock)
+    modulo_estudio_coches = Column(Boolean, default=True)  # Estudio de coches
+    
     # Relaciones
     usuarios = relationship("Usuario", back_populates="entorno_trabajo", foreign_keys="Usuario.entorno_trabajo_id")
     busquedas = relationship("Busqueda", back_populates="entorno_trabajo")
@@ -398,3 +409,37 @@ class PiezaPedida(Base):
     # Relaciones
     entorno_trabajo = relationship("EntornoTrabajo")
     usuario = relationship("Usuario")
+
+
+# ============== CONFIGURACIÓN DE STOCKEO AUTOMÁTICO ==============
+class ConfiguracionStockeo(Base):
+    """Configuración de importación automática de CSV por empresa"""
+    __tablename__ = "configuraciones_stockeo"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id"), unique=True)
+    
+    # Configuración del archivo
+    ruta_csv = Column(String(500), nullable=True)  # Ruta al archivo CSV
+    encoding = Column(String(50), default='utf-8-sig')  # Encoding del archivo
+    delimitador = Column(String(5), default=';')  # Delimitador CSV
+    
+    # Mapeo de columnas (JSON como string)
+    # Formato: {"refid": "ref.id", "oem": "oem", "precio": "precio", ...}
+    mapeo_columnas = Column(String(2000), nullable=True)
+    
+    # Configuración de tiempo
+    intervalo_minutos = Column(Integer, default=30)  # Cada cuántos minutos ejecutar
+    activo = Column(Boolean, default=False)  # Si está activo o no
+    
+    # Metadatos
+    ultima_ejecucion = Column(DateTime, nullable=True)
+    ultimo_resultado = Column(String(500), nullable=True)  # Resumen última ejecución
+    piezas_importadas = Column(Integer, default=0)
+    ventas_detectadas = Column(Integer, default=0)
+    
+    fecha_creacion = Column(DateTime, default=now_spain_naive)
+    fecha_actualizacion = Column(DateTime, default=now_spain_naive, onupdate=now_spain_naive)
+    
+    # Relaciones
+    entorno_trabajo = relationship("EntornoTrabajo")

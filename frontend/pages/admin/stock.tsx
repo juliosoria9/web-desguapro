@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useAuthStore } from '@/lib/auth-store';
+import ModuloProtegido from '@/components/ModuloProtegido';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -260,6 +261,7 @@ export default function StockPage() {
   };
 
   return (
+    <ModuloProtegido modulo="inventario_piezas">
     <div className="min-h-screen bg-gray-50">
       {/* Navbar */}
       <nav className="bg-white shadow-lg">
@@ -911,6 +913,7 @@ export default function StockPage() {
         </div>
       )}
     </div>
+    </ModuloProtegido>
   );
 }
 
