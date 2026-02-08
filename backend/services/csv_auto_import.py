@@ -103,12 +103,61 @@ def leer_csv_stock(csv_path: str) -> Tuple[list, list]:
     return cabeceras, filas
 
 
-def mapear_fila_a_pieza(cabeceras: list, fila: list) -> Dict:
+def mapear_fila_a_pieza(cabeceras: list, fila: list, mapeo_custom: dict = None) -> Dict:
     """
     Mapea una fila del CSV a un diccionario de campos de PiezaDesguace.
     Procesa ref.pieza como formato combinado OEM/OE/IAM separado por "/"
+    
+    Si se proporciona mapeo_custom, se usa ese mapeo en lugar del hardcodeado.
+    El mapeo_custom es un diccionario {campo_bd: columna_csv}
+    
+    El campo especial 'oem_oe_iam' permite mapear una sola columna del CSV
+    a los tres campos OEM, OE e IAM simultáneamente (separados por "/").
     """
     datos = {}
+    
+    # Si hay mapeo custom, usarlo
+    if mapeo_custom:
+        # Crear índice columna -> posición
+        col_index = {col.lower(): i for i, col in enumerate(cabeceras)}
+        
+        for campo_bd, columna_csv in mapeo_custom.items():
+            if not columna_csv:
+                continue
+            
+            # Campos especiales que no son columnas de la BD
+            if campo_bd == "oem_oe_iam":
+                idx = col_index.get(columna_csv.lower())
+                if idx is not None and idx < len(fila):
+                    valor = fila[idx].strip() if fila[idx] else None
+                    if valor:
+                        # Formato: "OEM / IAM / OE" separado por " / " (espacio-slash-espacio)
+                        partes = valor.split(" / ")
+                        datos["oem"] = partes[0].strip() if len(partes) >= 1 and partes[0].strip() else None
+                        datos["iam"] = partes[1].strip() if len(partes) >= 2 and partes[1].strip() else None
+                        if len(partes) >= 3:
+                            oe_completo = " / ".join(partes[2:]).strip()
+                            datos["oe"] = oe_completo if oe_completo else None
+                continue  # No añadir oem_oe_iam al diccionario de datos
+                
+            idx = col_index.get(columna_csv.lower())
+            if idx is None or idx >= len(fila):
+                continue
+                
+            valor = fila[idx].strip() if fila[idx] else None
+            
+            if campo_bd == "precio":
+                try:
+                    if valor:
+                        datos["precio"] = float(valor.replace(',', '.'))
+                except (ValueError, TypeError):
+                    datos["precio"] = None
+            else:
+                datos[campo_bd] = valor
+        
+        return datos
+    
+    # Mapeo hardcodeado por defecto (para compatibilidad con MotoCoche)
     
     for i, cabecera in enumerate(cabeceras):
         if i >= len(fila):
@@ -120,15 +169,15 @@ def mapear_fila_a_pieza(cabeceras: list, fila: list) -> Dict:
         if cabecera == "ref.id":
             datos["refid"] = valor
         elif cabecera == "ref.pieza":
-            # Formato combinado: OEM / OE / IAM
+            # Formato combinado: "OEM / IAM / OE" separado por " / " (espacio-slash-espacio)
             if valor:
-                partes = valor.split("/")
+                partes = valor.split(" / ")
                 datos["oem"] = partes[0].strip() if len(partes) >= 1 and partes[0].strip() else None
-                datos["oe"] = partes[1].strip() if len(partes) >= 2 and partes[1].strip() else None
+                datos["iam"] = partes[1].strip() if len(partes) >= 2 and partes[1].strip() else None
                 if len(partes) >= 3:
-                    # IAM puede tener múltiples valores
-                    iam_completo = "/".join(partes[2:]).strip()
-                    datos["iam"] = iam_completo if iam_completo else None
+                    # OE puede tener múltiples valores
+                    oe_completo = " / ".join(partes[2:]).strip()
+                    datos["oe"] = oe_completo if oe_completo else None
         elif cabecera == "precio":
             try:
                 # Convertir precio (formato español con coma)
@@ -220,11 +269,16 @@ def detectar_piezas_vendidas(
                     entorno_trabajo_id=entorno_trabajo_id,
                     refid=pieza.refid,
                     oem=pieza.oem,
+                    oe=pieza.oe,
+                    iam=pieza.iam,
                     articulo=pieza.articulo,
                     precio=pieza.precio,
+                    ubicacion=pieza.ubicacion,
+                    observaciones=pieza.observaciones,
                     marca=pieza.marca,
                     modelo=pieza.modelo,
                     version=pieza.version,
+                    imagen=pieza.imagen,
                     fecha_venta=now_spain_naive(),
                     fecha_fichaje=pieza.fecha_fichaje if hasattr(pieza, 'fecha_fichaje') else None,
                     usuario_fichaje_id=pieza.usuario_fichaje_id if hasattr(pieza, 'usuario_fichaje_id') else None,
@@ -395,6 +449,202 @@ def importar_csv_motocoche(csv_path: str = CSV_PATH) -> Dict:
         db.rollback()
         resultado["error"] = str(e)
         logger.error(f"Error en importación: {e}", exc_info=True)
+    finally:
+        db.close()
+    
+    return resultado
+
+
+def importar_csv_con_configuracion(
+    entorno_trabajo_id: int,
+    csv_path: str,
+    mapeo_columnas: dict,
+    encoding: str = 'utf-8-sig',
+    delimitador: str = ';'
+) -> Dict:
+    """
+    Importa un CSV usando la configuración personalizada de un entorno.
+    
+    Esta función es usada por el Stockeo Automático para importar
+    CSV con mapeos personalizados por cada empresa/entorno.
+    
+    Args:
+        entorno_trabajo_id: ID del entorno de trabajo
+        csv_path: Ruta al archivo CSV
+        mapeo_columnas: Dict {campo_bd: columna_csv}
+        encoding: Encoding del archivo CSV
+        delimitador: Delimitador del CSV
+    
+    Returns:
+        Dict con estadísticas de la importación
+    """
+    logger.info(f"[{datetime.now()}] Iniciando importación personalizada para entorno {entorno_trabajo_id}: {csv_path}")
+    
+    resultado = {
+        "success": False,
+        "archivo": csv_path,
+        "piezas_importadas": 0,
+        "piezas_actualizadas": 0,
+        "piezas_vendidas": 0,
+        "error": None
+    }
+    
+    # Verificar si existe el archivo
+    if not os.path.exists(csv_path):
+        resultado["error"] = f"Archivo no encontrado: {csv_path}"
+        logger.error(resultado["error"])
+        return resultado
+    
+    db: Session = SessionLocal()
+    try:
+        # Verificar que existe el entorno
+        entorno = db.query(EntornoTrabajo).filter(EntornoTrabajo.id == entorno_trabajo_id).first()
+        if not entorno:
+            resultado["error"] = f"Entorno de trabajo no encontrado: {entorno_trabajo_id}"
+            logger.error(resultado["error"])
+            return resultado
+        
+        logger.info(f"Entorno de trabajo: {entorno.nombre} (ID {entorno_trabajo_id})")
+        
+        # Leer CSV con encoding y delimitador personalizados
+        filas = []
+        cabeceras = []
+        
+        with open(csv_path, 'r', encoding=encoding, errors='replace') as f:
+            reader = csv.reader(f, delimiter=delimitador)
+            cabeceras = next(reader)
+            cabeceras = [c.strip().lower().lstrip('\ufeff') for c in cabeceras]
+            
+            for fila in reader:
+                if len(fila) >= len(cabeceras) / 2:
+                    if fila and fila[0]:
+                        fila[0] = fila[0].lstrip('\ufeff')
+                    filas.append(fila)
+        
+        logger.info(f"CSV leído: {len(filas)} filas, columnas: {cabeceras[:5]}...")
+        
+        # Obtener o crear BaseDesguace para este entorno
+        base = db.query(BaseDesguace).filter(
+            BaseDesguace.entorno_trabajo_id == entorno_trabajo_id
+        ).first()
+        
+        if not base:
+            base = BaseDesguace(
+                entorno_trabajo_id=entorno_trabajo_id,
+                nombre_archivo=os.path.basename(csv_path) + " (auto)",
+                total_piezas=0,
+                columnas=",".join(cabeceras),
+                fecha_subida=now_spain_naive()
+            )
+            db.add(base)
+            db.flush()
+            logger.info(f"Creada nueva BaseDesguace ID {base.id}")
+        
+        # Recopilar nuevos IDs para detectar vendidas
+        nuevos_refids = set()
+        
+        # Indexar piezas existentes por refid para actualizaciones
+        piezas_existentes = {}
+        for pieza in db.query(PiezaDesguace).filter(
+            PiezaDesguace.base_desguace_id == base.id
+        ).all():
+            if pieza.refid:
+                piezas_existentes[pieza.refid] = pieza
+        
+        logger.info(f"Piezas existentes en BD: {len(piezas_existentes)}")
+        
+        # Procesar filas con mapeo personalizado
+        piezas_nuevas = []
+        actualizadas = 0
+        
+        for fila in filas:
+            datos = mapear_fila_a_pieza(cabeceras, fila, mapeo_custom=mapeo_columnas)
+            refid = datos.get("refid")
+            
+            if refid:
+                nuevos_refids.add(refid)
+                
+                if refid in piezas_existentes:
+                    # Actualizar pieza existente
+                    pieza = piezas_existentes[refid]
+                    for campo, valor in datos.items():
+                        if valor is not None:
+                            setattr(pieza, campo, valor)
+                    actualizadas += 1
+                else:
+                    # Nueva pieza
+                    nueva = PiezaDesguace(
+                        base_desguace_id=base.id,
+                        **datos
+                    )
+                    piezas_nuevas.append(nueva)
+        
+        logger.info(f"Piezas en CSV: {len(nuevos_refids)}, Nuevas: {len(piezas_nuevas)}, Actualizadas: {actualizadas}")
+        
+        # Detectar piezas vendidas
+        vendidas = detectar_piezas_vendidas(db, base.id, entorno_trabajo_id, nuevos_refids)
+        
+        # Eliminar piezas que ya no están (vendidas)
+        if vendidas > 0:
+            ids_a_eliminar = set(piezas_existentes.keys()) - nuevos_refids
+            db.query(PiezaDesguace).filter(
+                PiezaDesguace.base_desguace_id == base.id,
+                PiezaDesguace.refid.in_(ids_a_eliminar)
+            ).delete(synchronize_session=False)
+        
+        # Insertar nuevas piezas
+        db.bulk_save_objects(piezas_nuevas)
+        
+        # ========== MARCAR PIEZAS PEDIDAS COMO RECIBIDAS ==========
+        piezas_recibidas = 0
+        if piezas_nuevas:
+            oems_nuevos = set()
+            for p in piezas_nuevas:
+                if p.oem:
+                    oems_nuevos.add(p.oem.strip().upper())
+                if p.refid:
+                    oems_nuevos.add(str(p.refid).strip().upper())
+            
+            if oems_nuevos:
+                pedidas_pendientes = db.query(PiezaPedida).filter(
+                    PiezaPedida.entorno_trabajo_id == entorno_trabajo_id,
+                    PiezaPedida.recibida == False
+                ).all()
+                
+                for pedida in pedidas_pendientes:
+                    ref_upper = pedida.referencia.strip().upper() if pedida.referencia else ""
+                    if ref_upper in oems_nuevos:
+                        pedida.recibida = True
+                        pedida.fecha_recepcion = now_spain_naive()
+                        piezas_recibidas += 1
+                        logger.info(f"Pieza pedida '{pedida.referencia}' marcada como RECIBIDA")
+        
+        # Actualizar metadatos de la base
+        base.total_piezas = len(nuevos_refids)
+        base.fecha_subida = now_spain_naive()
+        base.fecha_actualizacion = now_spain_naive()
+        base.nombre_archivo = os.path.basename(csv_path) + " (auto)"
+        
+        db.commit()
+        
+        resultado["success"] = True
+        resultado["piezas_importadas"] = len(piezas_nuevas)
+        resultado["piezas_actualizadas"] = actualizadas
+        resultado["piezas_vendidas"] = vendidas
+        resultado["piezas_recibidas"] = piezas_recibidas
+        resultado["total_piezas"] = len(nuevos_refids)
+        
+        logger.info(f"[{datetime.now()}] Importación personalizada completada:")
+        logger.info(f"  - Nuevas: {len(piezas_nuevas)}")
+        logger.info(f"  - Actualizadas: {actualizadas}")
+        logger.info(f"  - Vendidas detectadas: {vendidas}")
+        logger.info(f"  - Pedidas recibidas: {piezas_recibidas}")
+        logger.info(f"  - Total en stock: {len(nuevos_refids)}")
+        
+    except Exception as e:
+        db.rollback()
+        resultado["error"] = str(e)
+        logger.error(f"Error en importación personalizada: {e}", exc_info=True)
     finally:
         db.close()
     

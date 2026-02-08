@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useAuthStore } from '@/lib/auth-store';
+import ModuloProtegido from '@/components/ModuloProtegido';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -38,7 +39,7 @@ const PROVEEDORES_COLORES: { [key: string]: string } = {
   'Prasco': 'bg-pink-100 border-pink-300 text-pink-800',
 };
 
-export default function ReferenciasPage() {
+function ReferenciasContent() {
   const router = useRouter();
   const { user, logout, loadFromStorage } = useAuthStore();
   const [mounted, setMounted] = useState(false);
@@ -85,10 +86,12 @@ export default function ReferenciasPage() {
     setLoading(true);
     setResult(null);
     try {
+      const token = localStorage.getItem('token');
       const response = await axios.post<BusquedaResponse>(
         `${process.env.NEXT_PUBLIC_API_URL}/api/v1/referencias/buscar`,
         { referencia: searchTerm.trim() },
         {
+          headers: token ? { Authorization: `Bearer ${token}` } : {},
           withCredentials: true,
         }
       );
@@ -418,3 +421,11 @@ export default function ReferenciasPage() {
   );
 }
 
+// Exportar componente envuelto con protección de módulo
+export default function ReferenciasPage() {
+  return (
+    <ModuloProtegido modulo="referencias">
+      <ReferenciasContent />
+    </ModuloProtegido>
+  );
+}

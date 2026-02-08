@@ -532,14 +532,6 @@ function FichadasContent() {
               <h2 className="text-lg font-semibold text-gray-900">
                 {esAdmin ? 'Piezas Fichadas - Todos los usuarios' : 'Mis Piezas Fichadas'}
               </h2>
-              <button
-                onClick={() => router.push('/escaner')}
-                className="flex items-center gap-1 px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm hover:bg-indigo-700 transition-colors"
-                title="Escanear código de barras"
-              >
-                <span>📱</span>
-                <span className="hidden sm:inline">Escáner</span>
-              </button>
             </div>
             <div className="flex items-center gap-2">
               <label className="text-sm text-gray-600">Fecha:</label>

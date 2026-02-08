@@ -14,7 +14,7 @@ from app.models.busqueda import Busqueda, Usuario, BaseDesguace, PiezaDesguace, 
 from app.dependencies import get_current_user_with_workspace
 from core.scraper_factory import ScraperFactory
 from services.pricing import summarize, detect_outliers_iqr
-from services.precio_sugerido import sugerir_precio, sugerir_precio_db
+from services.precio_sugerido import sugerir_precio, sugerir_precio_db, tiene_configuracion_precios
 from app.scrapers.referencias import obtener_primera_referencia_por_proveedor
 
 logger = logging.getLogger(__name__)
@@ -348,6 +348,9 @@ async def buscar_precios(
         except Exception as ref_error:
             logger.warning(f"Error buscando referencias IAM: {ref_error}")
         
+        # Verificar si el entorno tiene configuración de precios
+        tiene_config_precios = tiene_configuracion_precios(db, usuario.entorno_trabajo_id)
+        
         # Retornar respuesta con datos multi-plataforma
         return BuscarPreciosResponse(
             referencia=request.referencia,
@@ -364,6 +367,7 @@ async def buscar_precios(
             resultados_por_plataforma=resultados_plataformas,
             plataformas_consultadas=len(plataformas_a_buscar),
             plataformas_con_resultados=plataformas_con_resultados,
+            configuracion_precios_activa=tiene_config_precios,
         )
         
     except HTTPException:

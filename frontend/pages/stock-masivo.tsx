@@ -1,8 +1,9 @@
-'use client';
+﻿'use client';
 
 import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/router';
 import { useAuthStore } from '@/lib/auth-store';
+import ModuloProtegido from '@/components/ModuloProtegido';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import JSZip from 'jszip';
@@ -39,7 +40,7 @@ interface CheckResponse {
 
 type ProcessingStatus = 'idle' | 'uploading' | 'mapping' | 'processing' | 'completed' | 'error';
 
-export default function StockMasivoPage() {
+function StockMasivoContent() {
   const router = useRouter();
   const { user, logout, loadFromStorage } = useAuthStore();
   const [mounted, setMounted] = useState(false);
@@ -62,8 +63,6 @@ export default function StockMasivoPage() {
   
   // Opciones de procesamiento
   const [umbral, setUmbral] = useState(20);
-  const [workers, setWorkers] = useState(5);
-  const [delay, setDelay] = useState(0.5);
   
   // Resultados
   const [result, setResult] = useState<CheckResponse | null>(null);
@@ -80,7 +79,7 @@ export default function StockMasivoPage() {
   const [searchTipo, setSearchTipo] = useState(''); // Búsqueda de tipos
   const [showSuggestions, setShowSuggestions] = useState(false); // Mostrar sugerencias
   
-  // Archivos de configuración de precios
+  // Archivos de Configuracion de precios
   const [familiaPreciosFile, setFamiliaPreciosFile] = useState<File | null>(null);
   const [piezaFamiliaFile, setPiezaFamiliaFile] = useState<File | null>(null);
   const [configUploaded, setConfigUploaded] = useState(false);
@@ -96,6 +95,10 @@ export default function StockMasivoPage() {
   const [logs, setLogs] = useState<string[]>([]);
   const [isProcessing, setIsProcessing] = useState(false);
   const consoleRef = React.useRef<HTMLDivElement>(null);
+  const [showOnlyOutliers, setShowOnlyOutliers] = useState(false);
+  
+  // Drag and drop
+  const [isDragging, setIsDragging] = useState(false);
   
   // Función para añadir log
   const addLog = (message: string, type: 'info' | 'success' | 'error' | 'warning' = 'info') => {
@@ -171,16 +174,49 @@ export default function StockMasivoPage() {
     });
   };
 
-  // Manejar subida de archivo
-  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (!e.target.files || !e.target.files[0]) return;
+  // Función para leer archivo con detección automática de encoding
+  const readFileWithEncoding = async (file: File): Promise<string> => {
+    const arrayBuffer = await file.arrayBuffer();
+    const bytes = new Uint8Array(arrayBuffer);
     
-    const uploadedFile = e.target.files[0];
+    // Detectar BOM UTF-8 (EF BB BF)
+    if (bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF) {
+      return new TextDecoder('utf-8').decode(arrayBuffer);
+    }
+    
+    // Detectar BOM UTF-16 LE (FF FE)
+    if (bytes[0] === 0xFF && bytes[1] === 0xFE) {
+      return new TextDecoder('utf-16le').decode(arrayBuffer);
+    }
+    
+    // Detectar BOM UTF-16 BE (FE FF)
+    if (bytes[0] === 0xFE && bytes[1] === 0xFF) {
+      return new TextDecoder('utf-16be').decode(arrayBuffer);
+    }
+    
+    // Intentar UTF-8 primero
+    const textUtf8 = new TextDecoder('utf-8').decode(arrayBuffer);
+    
+    // Si UTF-8 produce caracteres de reemplazo (U+FFFD), probar Windows-1252
+    if (textUtf8.includes('\uFFFD')) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = (e) => resolve(e.target?.result as string || '');
+        reader.onerror = () => reject(reader.error);
+        reader.readAsText(file, 'windows-1252');
+      });
+    }
+    
+    return textUtf8;
+  };
+
+  // Procesar archivo (común para input y drag & drop)
+  const processFile = async (uploadedFile: File) => {
     setFile(uploadedFile);
     setStatus('uploading');
     
     try {
-      const text = await uploadedFile.text();
+      const text = await readFileWithEncoding(uploadedFile);
       const detectedDelimiter = detectDelimiter(text);
       setDelimiter(detectedDelimiter);
       
@@ -209,6 +245,41 @@ export default function StockMasivoPage() {
     }
   };
 
+  // Manejar subida de archivo por input
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (!e.target.files || !e.target.files[0]) return;
+    await processFile(e.target.files[0]);
+  };
+
+  // Manejar drag & drop
+  const handleDragOver = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleDrop = async (e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragging(false);
+    
+    const files = e.dataTransfer.files;
+    if (files && files.length > 0) {
+      const droppedFile = files[0];
+      if (droppedFile.name.endsWith('.csv') || droppedFile.name.endsWith('.txt')) {
+        await processFile(droppedFile);
+      } else {
+        toast.error('Solo se aceptan archivos CSV o TXT');
+      }
+    }
+  };
+
   // Auto-mapeo de columnas basado en nombres comunes
   const autoMapColumns = (headers: string[]) => {
     const lowerHeaders = headers.map(h => h.toLowerCase().replace(/[.\s]/g, '_'));
@@ -222,7 +293,7 @@ export default function StockMasivoPage() {
     };
     
     // Buscar ID
-    const idPatterns = ['ref_id', 'ref.id', 'id', 'codigo', 'code'];
+    const idPatterns = ['ref_id', 'ref.id', 'id', 'Codigo', 'code'];
     for (const pattern of idPatterns) {
       const idx = lowerHeaders.findIndex(h => h.includes(pattern.replace('.', '_')));
       if (idx !== -1) {
@@ -316,7 +387,7 @@ export default function StockMasivoPage() {
     setExclusionFile(uploadedFile);
     
     try {
-      const text = await uploadedFile.text();
+      const text = await readFileWithEncoding(uploadedFile);
       const detectedDelim = detectDelimiter(text);
       const parsed = parseCSV(text, detectedDelim);
       
@@ -398,6 +469,10 @@ export default function StockMasivoPage() {
       return;
     }
     
+    // Configuración fija (sin controles de usuario)
+    const delay = 0; // Sin delay entre peticiones
+    const numWorkers = 1; // Procesamiento secuencial
+    
     setStatus('processing');
     setIsProcessing(true);
     setShouldStop(false);
@@ -407,8 +482,8 @@ export default function StockMasivoPage() {
     abortControllerRef.current = new AbortController();
     
     addLog('Iniciando verificación de stock...', 'info');
-    addLog(`Configuración: Umbral ${umbral}%, Workers ${workers}, Delay ${delay}s`, 'info');
-    if (ignorarBaratas) addLog('Filtro activo: Ignorar piezas más baratas que precio mercado', 'info');
+    addLog(`Configuración: Umbral ${umbral}%`, 'info');
+    if (ignorarBaratas) addLog('Filtro activo: Ignorar piezas mas baratas que precio mercado', 'info');
     if (tiposExcluidos.length > 0) addLog(`Tipos excluidos: ${tiposExcluidos.join(', ')}`, 'info');
     if (idsToExclude.size > 0) addLog(`IDs a excluir del CSV secundario: ${idsToExclude.size}`, 'info');
     
@@ -462,53 +537,57 @@ export default function StockMasivoPage() {
       addLog(`Total items a procesar: ${items.length}`, 'info');
       setProgress({ current: 0, total: items.length });
       
-      // Procesamiento paralelo independiente
+      // Procesamiento paralelo con workers - 1 item por petición
       const allResults: CheckResult[] = [];
       let itemsConOutliers = 0;
       let processed = 0;
       const startTime = Date.now();
       
-      // Función para procesar un item individual
+      // Función para procesar UN item
       const processItem = async (item: typeof items[0]): Promise<CheckResult | null> => {
         try {
           const response = await axios.post(
             `${process.env.NEXT_PUBLIC_API_URL}/api/v1/stock/verificar-masivo`,
             {
-              items: [item],
+              items: [item], // Solo 1 item por petición
               umbral_diferencia: umbral,
               workers: 1,
               delay: 0,
             },
             {
               withCredentials: true,
-              timeout: 60000,
+              timeout: 30000, // 30 segundos para 1 item
               signal: abortControllerRef.current?.signal,
             }
           );
           
-          if (response.data.resultados && response.data.resultados.length > 0) {
-            return response.data.resultados[0];
-          }
-          return null;
+          return response.data.resultados?.[0] || null;
         } catch (error: any) {
           if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
-            throw error; // Re-throw para que se maneje arriba
+            throw error;
           }
+          console.error('Error procesando item:', error);
           return null;
         }
       };
       
-      // Procesar con workers paralelos independientes
-      const queue = [...items];
-      const activePromises: Promise<void>[] = [];
+      // Cola de items para procesar
+      const itemQueue = [...items];
       
+      // Worker que procesa items de la cola
       const worker = async () => {
-        while (queue.length > 0 && !shouldStop && !abortControllerRef.current?.signal.aborted) {
-          const item = queue.shift();
+        while (itemQueue.length > 0 && !shouldStop && !abortControllerRef.current?.signal.aborted) {
+          const item = itemQueue.shift();
           if (!item) break;
           
           try {
+            // Pequeño delay entre peticiones
+            if (delay > 0) {
+              await new Promise(r => setTimeout(r, delay));
+            }
+            
             const result = await processItem(item);
+            
             processed++;
             setProgress({ current: processed, total: items.length });
             
@@ -534,20 +613,22 @@ export default function StockMasivoPage() {
               addLog(`${item.ref_oem} | Sin datos de mercado`, 'info');
             }
             
-            // Delay entre peticiones del mismo worker
-            await new Promise(resolve => setTimeout(resolve, delay * 1000));
-            
           } catch (error: any) {
             if (error.name === 'CanceledError' || error.code === 'ERR_CANCELED') {
               break;
             }
-            addLog(`Error: ${item.ref_oem} - ${error.message}`, 'error');
+            processed++;
+            setProgress({ current: processed, total: items.length });
+            addLog(`${item.ref_oem} | Error: ${error.message}`, 'error');
           }
         }
       };
       
-      // Iniciar workers
-      for (let i = 0; i < workers; i++) {
+      // Iniciar workers (secuencial con numWorkers=1)
+      addLog(`Procesando ${items.length} items...`, 'info');
+      
+      const activePromises: Promise<void>[] = [];
+      for (let i = 0; i < numWorkers; i++) {
         activePromises.push(worker());
       }
       
@@ -565,6 +646,7 @@ export default function StockMasivoPage() {
       }
       addLog(`Total procesados: ${allResults.length}/${items.length}`, 'info');
       addLog(`Outliers encontrados: ${itemsConOutliers}`, itemsConOutliers > 0 ? 'warning' : 'info');
+      addLog(`Velocidad: ${(items.length / elapsedTime).toFixed(1)} items/segundo`, 'info');
       
       setResult({
         total_items: items.length,
@@ -600,8 +682,20 @@ export default function StockMasivoPage() {
   const handleExportCSV = () => {
     if (!result) return;
     
+    // Filtrar piezas donde el precio actual NO es igual al precio sugerido
+    const piezasACambiar = result.resultados.filter(r => {
+      if (r.precio_sugerido === null || r.precio_sugerido === undefined) return true;
+      // Comparar redondeando a 2 decimales para evitar problemas de precisión
+      return Math.abs(r.precio_actual - r.precio_sugerido) > 0.01;
+    });
+    
+    if (piezasACambiar.length === 0) {
+      toast.success('¡No hay piezas que cambiar! Todos los precios ya son correctos.');
+      return;
+    }
+    
     const headers = ['ID', 'OEM', 'Tipo Pieza', 'Precio Actual', 'Precio Mercado', 'Precio Sugerido', 'Diferencia %', 'Familia', 'Estado'];
-    const rows = result.resultados.map(r => [
+    const rows = piezasACambiar.map(r => [
       r.ref_id,
       r.ref_oem,
       r.tipo_pieza,
@@ -622,7 +716,8 @@ export default function StockMasivoPage() {
     link.click();
     URL.revokeObjectURL(url);
     
-    toast.success('CSV exportado');
+    const excluidas = result.resultados.length - piezasACambiar.length;
+    toast.success(`CSV exportado (${piezasACambiar.length} piezas, ${excluidas} ya tenían precio correcto)`);
   };
 
   // Exportar resultados agrupados por precio sugerido en un ZIP
@@ -634,11 +729,25 @@ export default function StockMasivoPage() {
     const zip = new JSZip();
     const fecha = new Date().toISOString().split('T')[0];
     
-    // Agrupar resultados por precio sugerido
+    // Filtrar piezas donde el precio actual NO es igual al precio sugerido
+    const piezasACambiar = result.resultados.filter(r => {
+      if (r.precio_sugerido === null || r.precio_sugerido === undefined) return true;
+      // Comparar redondeando a 2 decimales para evitar problemas de precisión
+      return Math.abs(r.precio_actual - r.precio_sugerido) > 0.01;
+    });
+    
+    const piezasYaCorrectas = result.resultados.length - piezasACambiar.length;
+    
+    if (piezasACambiar.length === 0) {
+      toast.success('¡No hay piezas que cambiar! Todos los precios ya son correctos.');
+      return;
+    }
+    
+    // Agrupar resultados filtrados por precio sugerido
     const gruposPorPrecio: Record<string, typeof result.resultados> = {};
     const sinPrecioSugerido: typeof result.resultados = [];
     
-    result.resultados.forEach(r => {
+    piezasACambiar.forEach(r => {
       if (r.precio_sugerido !== null && r.precio_sugerido !== undefined) {
         const precioKey = r.precio_sugerido.toFixed(0);
         if (!gruposPorPrecio[precioKey]) {
@@ -694,12 +803,14 @@ export default function StockMasivoPage() {
     const resumenLines = [
       `Resumen de Verificación - ${fecha}`,
       '',
-      `Total items: ${result.total_items}`,
+      `Total items analizados: ${result.total_items}`,
       `Items procesados: ${result.items_procesados}`,
+      `Piezas a cambiar: ${piezasACambiar.length}`,
+      `Piezas con precio ya correcto (excluidas): ${piezasYaCorrectas}`,
       `Outliers encontrados: ${result.items_con_outliers}`,
       `Tiempo de procesamiento: ${result.tiempo_procesamiento.toFixed(1)}s`,
       '',
-      'Distribución por precio sugerido:',
+      'Distribución por precio sugerido (solo piezas a cambiar):',
       ...Object.entries(gruposPorPrecio)
         .sort(([a], [b]) => parseInt(a) - parseInt(b))
         .map(([precio, items]) => `  - ${precio}€: ${items.length} piezas`),
@@ -711,7 +822,8 @@ export default function StockMasivoPage() {
     const content = await zip.generateAsync({ type: 'blob' });
     saveAs(content, `stock_verificado_${fecha}.zip`);
     
-    toast.success(`ZIP generado con ${Object.keys(gruposPorPrecio).length + (sinPrecioSugerido.length > 0 ? 1 : 0)} archivos`);
+    const numArchivos = Object.keys(gruposPorPrecio).length + (sinPrecioSugerido.length > 0 ? 1 : 0);
+    toast.success(`ZIP generado: ${piezasACambiar.length} piezas a cambiar (${piezasYaCorrectas} ya correctas excluidas)`);
   };
 
   // Reiniciar
@@ -770,7 +882,7 @@ export default function StockMasivoPage() {
               </div>
               <div>
                 <h1 className="text-xl font-bold text-gray-900">DesguaPro</h1>
-                <p className="text-xs text-gray-500">Stock Masivo</p>
+                <p className="text-xs text-gray-500">Control de Precios</p>
               </div>
             </div>
 
@@ -810,7 +922,11 @@ export default function StockMasivoPage() {
                   stepStatus === 'current' ? 'bg-blue-600 text-white' :
                   'bg-gray-200 text-gray-500'
                 }`}>
-                  {stepStatus === 'completed' ? '✓' : idx + 1}
+                  {stepStatus === 'completed' ? (
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                    </svg>
+                  ) : idx + 1}
                 </div>
                 {idx < 3 && <div className={`w-16 h-1 ${
                   stepStatus === 'completed' ? 'bg-green-600' : 'bg-gray-200'
@@ -826,10 +942,24 @@ export default function StockMasivoPage() {
         
         {/* Step 1: Upload */}
         {(status === 'idle' || status === 'uploading') && (
-          <div className="bg-white rounded-lg shadow p-8">
-            <h2 className="text-2xl font-bold text-gray-900 mb-6">📤 Subir Base de Datos CSV</h2>
+          <div className="bg-white rounded-2xl shadow-md p-8 border border-gray-100">
+            <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-3">
+              <svg className="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              Subir Base de Datos CSV
+            </h2>
             
-            <div className="border-2 border-dashed border-gray-300 rounded-lg p-12 text-center hover:border-blue-500 transition-colors">
+            <div 
+              className={`border-2 border-dashed rounded-lg p-12 text-center transition-all duration-200 ${
+                isDragging 
+                  ? 'border-blue-500 bg-blue-50 scale-[1.02]' 
+                  : 'border-gray-300 hover:border-blue-400 hover:bg-gray-50'
+              }`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
               <input
                 type="file"
                 accept=".csv,.txt"
@@ -837,13 +967,31 @@ export default function StockMasivoPage() {
                 className="hidden"
                 id="csvUpload"
               />
-              <label htmlFor="csvUpload" className="cursor-pointer">
-                <div className="text-6xl mb-4">📁</div>
-                <p className="text-xl text-gray-600 mb-2">
-                  {status === 'uploading' ? 'Cargando...' : 'Haz clic o arrastra un archivo CSV'}
+              <label htmlFor="csvUpload" className="cursor-pointer block">
+                <div className="flex justify-center mb-4">
+                  <svg 
+                    className={`w-16 h-16 transition-colors ${isDragging ? 'text-blue-500' : 'text-gray-400'}`} 
+                    fill="none" 
+                    stroke="currentColor" 
+                    viewBox="0 0 24 24"
+                  >
+                    <path 
+                      strokeLinecap="round" 
+                      strokeLinejoin="round" 
+                      strokeWidth={1.5} 
+                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" 
+                    />
+                  </svg>
+                </div>
+                <p className={`text-xl mb-2 ${isDragging ? 'text-blue-600 font-medium' : 'text-gray-600'}`}>
+                  {status === 'uploading' 
+                    ? 'Procesando archivo...' 
+                    : isDragging 
+                      ? 'Suelta el archivo aquí' 
+                      : 'Arrastra un archivo CSV o haz clic para seleccionar'}
                 </p>
                 <p className="text-sm text-gray-500">
-                  Acepta archivos CSV con cualquier estructura de columnas
+                  Acepta archivos .csv y .txt con cualquier estructura de columnas
                 </p>
               </label>
             </div>
@@ -852,9 +1000,14 @@ export default function StockMasivoPage() {
 
         {/* Step 2: Column Mapping */}
         {status === 'mapping' && (
-          <div className="bg-white rounded-lg shadow p-8">
+          <div className="bg-white rounded-2xl shadow-md p-8 border border-gray-100">
             <div className="flex justify-between items-center mb-6">
-              <h2 className="text-2xl font-bold text-gray-900">🗂️ Mapear Columnas</h2>
+              <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-3">
+                <svg className="w-7 h-7 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 17V7m0 10a2 2 0 01-2 2H5a2 2 0 01-2-2V7a2 2 0 012-2h2a2 2 0 012 2m0 10a2 2 0 002 2h2a2 2 0 002-2M9 7a2 2 0 012-2h2a2 2 0 012 2m0 10V7m0 10a2 2 0 002 2h2a2 2 0 002-2V7a2 2 0 00-2-2h-2a2 2 0 00-2 2" />
+                </svg>
+                Mapear Columnas
+              </h2>
               <button
                 onClick={handleReset}
                 className="text-gray-500 hover:text-gray-700"
@@ -875,8 +1028,11 @@ export default function StockMasivoPage() {
             {/* Mapeo de columnas */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  📍 Columna ID <span className="text-red-500">*</span>
+                <label className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-red-500" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5.05 4.05a7 7 0 119.9 9.9L10 18.9l-4.95-4.95a7 7 0 010-9.9zM10 11a2 2 0 100-4 2 2 0 000 4z" clipRule="evenodd" />
+                  </svg>
+                  Columna ID <span className="text-red-500">*</span>
                 </label>
                 <select
                   value={mapping.id}
@@ -891,8 +1047,11 @@ export default function StockMasivoPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  🔧 Columna OEM (Referencia) <span className="text-red-500">*</span>
+                <label className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-yellow-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                  </svg>
+                  Columna OEM (Referencia) <span className="text-red-500">*</span>
                 </label>
                 <select
                   value={mapping.oem}
@@ -907,8 +1066,11 @@ export default function StockMasivoPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  🔩 Columna OE (Opcional)
+                <label className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-gray-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                  </svg>
+                  Columna OE (Opcional)
                 </label>
                 <select
                   value={mapping.oe}
@@ -923,8 +1085,11 @@ export default function StockMasivoPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  📦 Columna Tipo de Pieza <span className="text-red-500">*</span>
+                <label className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                  </svg>
+                  Columna Tipo de Pieza <span className="text-red-500">*</span>
                 </label>
                 <select
                   value={mapping.tipo_pieza}
@@ -939,8 +1104,11 @@ export default function StockMasivoPage() {
               </div>
 
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  💰 Columna Precio <span className="text-red-500">*</span>
+                <label className="text-sm font-medium text-gray-700 mb-2 flex items-center gap-2">
+                  <svg className="w-4 h-4 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Columna Precio <span className="text-red-500">*</span>
                 </label>
                 <select
                   value={mapping.precio}
@@ -957,7 +1125,13 @@ export default function StockMasivoPage() {
 
             {/* Vista previa */}
             <div className="mb-8">
-              <h3 className="text-lg font-semibold mb-4">👁️ Vista Previa (primeras 5 filas)</h3>
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <svg className="w-5 h-5 text-purple-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+                </svg>
+                Vista Previa (primeras 5 filas)
+              </h3>
               <div className="overflow-x-auto border rounded-lg">
                 <table className="w-full text-sm">
                   <thead className="bg-gray-100">
@@ -996,8 +1170,14 @@ export default function StockMasivoPage() {
 
             {/* Opciones de procesamiento */}
             <div className="border-t pt-6 mb-8">
-              <h3 className="text-lg font-semibold mb-4">⚙️ Opciones de Procesamiento</h3>
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                </svg>
+                Opciones de Procesamiento
+              </h3>
+              <div className="grid grid-cols-1 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Umbral Diferencia: {umbral}%
@@ -1008,40 +1188,9 @@ export default function StockMasivoPage() {
                     max="50"
                     value={umbral}
                     onChange={(e) => setUmbral(parseInt(e.target.value))}
-                    className="w-full"
+                    className="w-full accent-blue-600"
                   />
                   <p className="text-xs text-gray-500 mt-1">Marca como outlier si la diferencia supera este %</p>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Workers Paralelos: {workers}
-                  </label>
-                  <input
-                    type="range"
-                    min="1"
-                    max="30"
-                    value={workers}
-                    onChange={(e) => setWorkers(parseInt(e.target.value))}
-                    className="w-full"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Más workers = más rápido pero más carga</p>
-                </div>
-                
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
-                    Delay entre peticiones: {delay}s
-                  </label>
-                  <input
-                    type="range"
-                    min="0.1"
-                    max="2"
-                    step="0.1"
-                    value={delay}
-                    onChange={(e) => setDelay(parseFloat(e.target.value))}
-                    className="w-full"
-                  />
-                  <p className="text-xs text-gray-500 mt-1">Espera entre cada búsqueda</p>
                 </div>
               </div>
               
@@ -1055,7 +1204,7 @@ export default function StockMasivoPage() {
                     className="w-5 h-5 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                   />
                   <span className="text-sm font-medium text-gray-700">
-                    Ignorar piezas más baratas que el precio de mercado
+                    Ignorar piezas mas baratas que el precio de mercado
                   </span>
                 </label>
                 <p className="text-xs text-gray-500 mt-1 ml-8">
@@ -1067,8 +1216,11 @@ export default function StockMasivoPage() {
             {/* Filtro de tipos de piezas - Buscador */}
             {tiposDisponibles.length > 0 && (
               <div className="border-t pt-6 mb-8">
-                <h3 className="text-lg font-semibold mb-4">
-                  🚫 Excluir Tipos de Piezas 
+                <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                  </svg>
+                  Excluir Tipos de Piezas 
                   <span className="text-sm font-normal text-gray-500 ml-2">
                     ({tiposExcluidos.length} excluidos)
                   </span>
@@ -1167,10 +1319,13 @@ export default function StockMasivoPage() {
               </div>
             )}
 
-            {/* Subir archivos de configuración de precios */}
+            {/* Subir archivos de Configuracion de precios */}
             <div className="border-t pt-6 mb-8">
-              <h3 className="text-lg font-semibold mb-4">
-                📁 Archivos de Configuración de Precios (Opcional)
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                Archivos de Configuracion de Precios (Opcional)
               </h3>
               <p className="text-sm text-gray-600 mb-4">
                 Sube los archivos CSV necesarios para calcular precios sugeridos por familia:
@@ -1194,7 +1349,17 @@ export default function StockMasivoPage() {
                     id="familiaPreciosUpload"
                   />
                   <label htmlFor="familiaPreciosUpload" className="cursor-pointer block">
-                    <div className="text-3xl mb-2">{familiaPreciosFile ? '✅' : '📊'}</div>
+                    <div className="mb-2 flex justify-center">
+                      {familiaPreciosFile ? (
+                        <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                        </svg>
+                      )}
+                    </div>
                     <p className="text-sm font-medium text-gray-700">familia_precios.csv</p>
                     <p className="text-xs text-gray-500 mt-1">
                       {familiaPreciosFile ? familiaPreciosFile.name : 'Precios por familia'}
@@ -1227,7 +1392,17 @@ export default function StockMasivoPage() {
                     id="piezaFamiliaUpload"
                   />
                   <label htmlFor="piezaFamiliaUpload" className="cursor-pointer block">
-                    <div className="text-3xl mb-2">{piezaFamiliaFile ? '✅' : '🔗'}</div>
+                    <div className="mb-2 flex justify-center">
+                      {piezaFamiliaFile ? (
+                        <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.828 10.172a4 4 0 00-5.656 0l-4 4a4 4 0 105.656 5.656l1.102-1.101m-.758-4.899a4 4 0 005.656 0l4-4a4 4 0 00-5.656-5.656l-1.1 1.1" />
+                        </svg>
+                      )}
+                    </div>
                     <p className="text-sm font-medium text-gray-700">pieza_familia.csv</p>
                     <p className="text-xs text-gray-500 mt-1">
                       {piezaFamiliaFile ? piezaFamiliaFile.name : 'Relación pieza-familia'}
@@ -1245,16 +1420,22 @@ export default function StockMasivoPage() {
               </div>
               
               {(familiaPreciosFile || piezaFamiliaFile) && (
-                <p className="text-xs text-green-600 mt-2">
-                  ✓ Los archivos se usarán para calcular precios sugeridos
+                <p className="text-xs text-green-600 mt-2 flex items-center gap-1">
+                  <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                  </svg>
+                  Los archivos se usarán para calcular precios sugeridos
                 </p>
               )}
             </div>
 
             {/* CSV de exclusión por ID */}
             <div className="border-t pt-6 mb-8">
-              <h3 className="text-lg font-semibold mb-4">
-                🚫 Excluir Piezas por ID (Opcional)
+              <h3 className="text-lg font-semibold mb-4 flex items-center gap-2">
+                <svg className="w-5 h-5 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
+                </svg>
+                Excluir Piezas por ID (Opcional)
               </h3>
               <p className="text-sm text-gray-600 mb-4">
                 Sube un CSV con IDs de piezas que quieras excluir del chequeo:
@@ -1273,7 +1454,17 @@ export default function StockMasivoPage() {
                     id="exclusionFileUpload"
                   />
                   <label htmlFor="exclusionFileUpload" className="cursor-pointer block">
-                    <div className="text-3xl mb-2">{exclusionFile ? '📋' : '➕'}</div>
+                    <div className="mb-2 flex justify-center">
+                      {exclusionFile ? (
+                        <svg className="w-8 h-8 text-orange-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-8 h-8 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                        </svg>
+                      )}
+                    </div>
                     <p className="text-sm font-medium text-gray-700">CSV de exclusión</p>
                     <p className="text-xs text-gray-500 mt-1">
                       {exclusionFile ? exclusionFile.name : 'Subir archivo con IDs a excluir'}
@@ -1306,8 +1497,9 @@ export default function StockMasivoPage() {
                       ))}
                     </select>
                     {idsToExclude.size > 0 && (
-                      <p className="text-xs text-orange-600 mt-2">
-                        ⚠️ {idsToExclude.size} IDs serán excluidos del procesamiento
+                      <p className="text-xs text-orange-600 mt-2 flex items-center gap-1">
+                        <span className="inline-block w-4 h-4 bg-orange-500 rounded-full text-white text-xs text-center leading-4 font-bold">!</span>
+                        {idsToExclude.size} IDs serán excluidos del procesamiento
                       </p>
                     )}
                   </div>
@@ -1319,13 +1511,15 @@ export default function StockMasivoPage() {
             <div className="flex justify-between items-center">
               <div className="text-sm text-gray-600">
                 {tiposExcluidos.length > 0 && (
-                  <p className="text-orange-600">
-                    ⚠️ {tiposExcluidos.length} tipos de piezas serán excluidos
+                  <p className="text-orange-600 flex items-center gap-1">
+                    <span className="inline-block w-4 h-4 bg-orange-500 rounded-full text-white text-xs text-center leading-4 font-bold">!</span>
+                    {tiposExcluidos.length} tipos de piezas serán excluidos
                   </p>
                 )}
                 {idsToExclude.size > 0 && (
-                  <p className="text-orange-600">
-                    ⚠️ {idsToExclude.size} IDs serán excluidos
+                  <p className="text-orange-600 flex items-center gap-1">
+                    <span className="inline-block w-4 h-4 bg-orange-500 rounded-full text-white text-xs text-center leading-4 font-bold">!</span>
+                    {idsToExclude.size} IDs serán excluidos
                   </p>
                 )}
               </div>
@@ -1339,9 +1533,13 @@ export default function StockMasivoPage() {
                 <button
                   onClick={handleStartProcessing}
                   disabled={!isMappingValid()}
-                  className="px-8 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg font-semibold transition-colors"
+                  className="px-8 py-3 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 text-white rounded-lg font-semibold transition-colors flex items-center gap-2"
                 >
-                  🚀 Iniciar Verificación
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Iniciar Verificación
                 </button>
               </div>
             </div>
@@ -1377,7 +1575,12 @@ export default function StockMasivoPage() {
             {/* Consola de logs */}
             <div className="mb-4">
               <div className="flex justify-between items-center mb-2">
-                <h3 className="text-lg font-semibold text-gray-700">📟 Consola</h3>
+                <h3 className="text-lg font-semibold text-gray-700 flex items-center gap-2">
+                  <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                  </svg>
+                  Consola
+                </h3>
                 <button
                   onClick={clearLogs}
                   className="text-xs text-gray-500 hover:text-gray-700"
@@ -1408,7 +1611,9 @@ export default function StockMasivoPage() {
                 disabled={shouldStop}
                 className="px-8 py-3 bg-red-600 hover:bg-red-700 disabled:bg-gray-400 text-white rounded-lg font-semibold transition-colors flex items-center space-x-2"
               >
-                <span>⏹️</span>
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <rect x="6" y="6" width="12" height="12" rx="1" strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} />
+                </svg>
                 <span>{shouldStop ? 'Deteniendo...' : 'Detener y Ver Resultados'}</span>
               </button>
             </div>
@@ -1425,20 +1630,29 @@ export default function StockMasivoPage() {
             {/* Panel de resultados */}
             <div className="bg-white rounded-lg shadow p-8">
               <div className="flex justify-between items-center mb-6">
-                <h2 className="text-2xl font-bold text-gray-900">📊 Resultados</h2>
+                <h2 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+                  <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                  </svg>
+                  Resultados
+                </h2>
                 <div className="flex space-x-4">
                   <button
                     onClick={handleExportZIP}
                     className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg flex items-center space-x-2"
                   >
-                    <span>📦</span>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                    </svg>
                     <span>Exportar ZIP (por precio)</span>
                   </button>
                   <button
                     onClick={handleExportCSV}
                     className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg flex items-center space-x-2"
                   >
-                    <span>📥</span>
+                    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
                     <span>Exportar CSV único</span>
                   </button>
                   <button
@@ -1476,13 +1690,45 @@ export default function StockMasivoPage() {
               </div>
             </div>
 
+            {/* Filtrar resultados: excluir donde precio_actual ≈ precio_sugerido */}
+            {(() => {
+              const resultadosFiltrados = result.resultados.filter(r => {
+                if (r.precio_sugerido === null || r.precio_sugerido === undefined) return true;
+                // Precio sugerido es SIN IVA, precio actual CON IVA (21%)
+                const precioSugeridoConIva = r.precio_sugerido * 1.21;
+                return Math.abs(r.precio_actual - precioSugeridoConIva) > 1; // Tolerancia 1€
+              });
+              const excluidos = result.resultados.length - resultadosFiltrados.length;
+              const outliersFiltrados = resultadosFiltrados.filter(r => r.es_outlier).length;
+              
+              return (
+                <>
+                  {excluidos > 0 && (
+                    <div className="mb-4 p-3 bg-green-50 border border-green-200 rounded-lg text-sm text-green-800 flex items-center gap-2">
+                      <svg className="w-4 h-4 text-green-600 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      {excluidos} piezas ya tienen el precio correcto y fueron excluidas
+                    </div>
+                  )}
+
             {/* Filtros */}
             <div className="flex space-x-4 mb-4">
-              <button className="px-4 py-2 bg-gray-100 hover:bg-gray-200 rounded-lg text-sm font-medium">
-                Todos ({result.resultados.length})
+              <button 
+                onClick={() => setShowOnlyOutliers(false)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  !showOnlyOutliers ? 'bg-blue-600 text-white' : 'bg-gray-100 hover:bg-gray-200 text-gray-700'
+                }`}
+              >
+                Todos ({resultadosFiltrados.length})
               </button>
-              <button className="px-4 py-2 bg-red-100 hover:bg-red-200 text-red-800 rounded-lg text-sm font-medium">
-                Solo Outliers ({result.items_con_outliers})
+              <button 
+                onClick={() => setShowOnlyOutliers(true)}
+                className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  showOnlyOutliers ? 'bg-red-600 text-white' : 'bg-red-100 hover:bg-red-200 text-red-800'
+                }`}
+              >
+                Solo Outliers ({outliersFiltrados})
               </button>
             </div>
 
@@ -1502,7 +1748,7 @@ export default function StockMasivoPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y">
-                  {result.resultados.map((r, idx) => (
+                  {(showOnlyOutliers ? resultadosFiltrados.filter(r => r.es_outlier) : resultadosFiltrados).map((r, idx) => (
                     <tr key={idx} className={r.es_outlier ? 'bg-red-50' : 'hover:bg-gray-50'}>
                       <td className="px-3 py-2 font-mono text-xs">{r.ref_id}</td>
                       <td className="px-3 py-2 font-mono text-xs">{r.ref_oem}</td>
@@ -1518,10 +1764,22 @@ export default function StockMasivoPage() {
                         </span>
                       </td>
                       <td className="px-3 py-2 text-center">
-                        <span className={`px-2 py-1 rounded text-xs font-semibold ${
+                        <span className={`px-2 py-1 rounded text-xs font-semibold inline-flex items-center gap-1 ${
                           r.es_outlier ? 'bg-red-100 text-red-800' : 'bg-green-100 text-green-800'
                         }`}>
-                          {r.es_outlier ? '⚠️ Revisar' : '✓ OK'}
+                          {r.es_outlier ? (
+                            <>
+                              <span className="w-3 h-3 bg-red-500 rounded-full text-white text-[10px] leading-3 text-center font-bold">!</span>
+                              Revisar
+                            </>
+                          ) : (
+                            <>
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
+                              </svg>
+                              OK
+                            </>
+                          )}
                         </span>
                       </td>
                     </tr>
@@ -1529,6 +1787,9 @@ export default function StockMasivoPage() {
                 </tbody>
               </table>
             </div>
+            </>
+              );
+            })()}
             </div>
             
             {/* Consola de logs - Colapsable */}
@@ -1536,7 +1797,12 @@ export default function StockMasivoPage() {
               <div className="bg-white rounded-lg shadow p-6">
                 <details className="group">
                   <summary className="cursor-pointer flex justify-between items-center">
-                    <h3 className="text-lg font-semibold text-gray-700">📟 Consola de Logs</h3>
+                    <h3 className="text-lg font-semibold text-gray-700 flex items-center gap-2">
+                      <svg className="w-5 h-5 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                      </svg>
+                      Consola de Logs
+                    </h3>
                     <span className="text-gray-400 group-open:rotate-180 transition-transform">▼</span>
                   </summary>
                   <div 
@@ -1560,3 +1826,11 @@ export default function StockMasivoPage() {
   );
 }
 
+// Exportar componente envuelto con protección de módulo
+export default function StockMasivoPage() {
+  return (
+    <ModuloProtegido modulo="stock_masivo">
+      <StockMasivoContent />
+    </ModuloProtegido>
+  );
+}

@@ -5,6 +5,7 @@ import { useRouter } from 'next/router';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '@/lib/auth-store';
+import ModuloProtegido from '@/components/ModuloProtegido';
 
 const API_URL = `${process.env.NEXT_PUBLIC_API_URL}/api/v1`;
 
@@ -53,7 +54,7 @@ interface Entorno {
   nombre: string;
 }
 
-export default function VerificarPiezasPage() {
+function VerificarPiezasContent() {
   const router = useRouter();
   const { user, token, loadFromStorage } = useAuthStore();
   const [mounted, setMounted] = useState(false);
@@ -1211,3 +1212,11 @@ export default function VerificarPiezasPage() {
   );
 }
 
+// Exportar componente envuelto con protección de módulo
+export default function VerificarPiezasPage() {
+  return (
+    <ModuloProtegido modulo="piezas_nuevas">
+      <VerificarPiezasContent />
+    </ModuloProtegido>
+  );
+}

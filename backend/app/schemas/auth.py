@@ -11,6 +11,7 @@ class LoginRequest(BaseModel):
     """Request para login"""
     email: str = Field(..., min_length=1, max_length=100)  # Puede ser email o username
     password: str = Field(..., min_length=6)
+    entorno_id: Optional[int] = None  # Opcional: especificar empresa si hay duplicados
 
 
 class LoginResponse(BaseModel):

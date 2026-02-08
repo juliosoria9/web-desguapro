@@ -8,51 +8,70 @@ import { useAuthStore } from '@/lib/auth-store';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL; 
 
+interface Empresa {
+  entorno_id: number;
+  nombre: string;
+}
+
 export default function LoginPage() {
   const router = useRouter();
   const setAuth = useAuthStore((state) => state.setAuth);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
+  const [empresas, setEmpresas] = useState<Empresa[]>([]);
+  const [showEmpresaSelector, setShowEmpresaSelector] = useState(false);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent, entornoId?: number) => {
     e.preventDefault();
     setLoading(true);
 
     try {
       console.log('Intentando login con:', username);
       const response = await axios.post(`${API_URL}/api/v1/auth/login`, {
-        email: username,  // El backend espera 'email' pero es el username
+        email: username,
         password,
+        entorno_id: entornoId || undefined,
       }, {
-        withCredentials: true,  // Permitir que el backend establezca la cookie HTTPOnly
+        withCredentials: true,
       });
 
       console.log('Respuesta del servidor:', response.data);
       const { usuario, access_token } = response.data;
 
-      // Guardar en Zustand store (usuario y token)
       setAuth(usuario, access_token);
-
+      setShowEmpresaSelector(false);
       toast.success(`¡Bienvenido ${usuario.email}!`);
 
-      // Redirigir a dashboard
       setTimeout(() => {
         router.push('/dashboard');
       }, 500);
     } catch (error: any) {
       console.error('Error en login:', error);
-      const detail = error.response?.data?.detail;
-      let message = 'Error en login';
-      if (typeof detail === 'string') {
-        message = detail;
-      } else if (Array.isArray(detail) && detail.length > 0) {
-        message = detail[0]?.msg || message;
+      
+      // Si hay múltiples empresas (código 300)
+      if (error.response?.status === 300) {
+        const data = error.response.data.detail;
+        setEmpresas(data.empresas);
+        setShowEmpresaSelector(true);
+        toast('Selecciona una empresa', { icon: '🏢' });
+      } else {
+        const detail = error.response?.data?.detail;
+        let message = 'Error en login';
+        if (typeof detail === 'string') {
+          message = detail;
+        } else if (Array.isArray(detail) && detail.length > 0) {
+          message = detail[0]?.msg || message;
+        }
+        toast.error(message);
       }
-      toast.error(message);
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleSelectEmpresa = (entornoId: number) => {
+    handleLogin({ preventDefault: () => {} } as React.FormEvent, entornoId);
   };
 
   return (
@@ -135,6 +154,27 @@ export default function LoginPage() {
           >
             {loading ? 'Iniciando sesión...' : 'Iniciar Sesión'}
           </button>
+
+          {/* Selector de empresas (cuando hay múltiples) */}
+          {showEmpresaSelector && empresas.length > 0 && (
+            <div className="mt-4 p-4 bg-blue-50 rounded-lg border border-blue-200">
+              <p className="text-sm text-blue-800 font-medium mb-3">
+                Este usuario existe en varias empresas. Selecciona una:
+              </p>
+              <div className="space-y-2">
+                {empresas.map((emp) => (
+                  <button
+                    key={emp.entorno_id}
+                    type="button"
+                    onClick={() => handleSelectEmpresa(emp.entorno_id)}
+                    className="w-full text-left px-4 py-3 bg-white border border-blue-300 rounded-lg hover:bg-blue-100 hover:border-blue-400 transition-colors"
+                  >
+                    <span className="font-medium text-blue-900">{emp.nombre}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
         </form>
       </div>
     </div>

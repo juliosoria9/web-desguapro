@@ -348,17 +348,17 @@ def sugerir_precio_db(
     
     Returns:
         Dict con precio_sugerido, familia, y lista de precios de la familia
+        O None si el desguace no tiene configuración de precios
     """
     # Verificar si tiene configuración propia
-    if tiene_configuracion_precios(db, entorno_trabajo_id):
-        pieza_familia = get_pieza_familia_db(db, entorno_trabajo_id)
-        familia_precios = get_familia_precios_db(db, entorno_trabajo_id)
-        logger.info(f"Usando configuración de precios del entorno {entorno_trabajo_id}")
-    else:
-        # Fallback a archivos CSV globales
-        pieza_familia = get_pieza_familia()
-        familia_precios = get_familia_precios()
-        logger.info(f"Entorno {entorno_trabajo_id} sin config propia, usando CSV globales")
+    if not tiene_configuracion_precios(db, entorno_trabajo_id):
+        # No tiene configuración - NO usar fallback global
+        logger.info(f"Entorno {entorno_trabajo_id} sin configuración de precios propia")
+        return None
+    
+    pieza_familia = get_pieza_familia_db(db, entorno_trabajo_id)
+    familia_precios = get_familia_precios_db(db, entorno_trabajo_id)
+    logger.info(f"Usando configuración de precios del entorno {entorno_trabajo_id}")
     
     # Buscar la familia de la pieza usando la función mejorada
     familia = buscar_familia_en_mapeo(referencia, pieza_familia)
@@ -433,9 +433,9 @@ def sugerir_precio_db(
 
 def buscar_familia_db(db: Session, entorno_trabajo_id: int, texto: str) -> Optional[str]:
     """Busca la familia de una pieza usando la configuración del desguace"""
-    if tiene_configuracion_precios(db, entorno_trabajo_id):
-        pieza_familia = get_pieza_familia_db(db, entorno_trabajo_id)
-    else:
-        pieza_familia = get_pieza_familia()
+    if not tiene_configuracion_precios(db, entorno_trabajo_id):
+        # No tiene configuración propia - no buscar
+        return None
     
+    pieza_familia = get_pieza_familia_db(db, entorno_trabajo_id)
     return buscar_familia_en_mapeo(texto, pieza_familia)

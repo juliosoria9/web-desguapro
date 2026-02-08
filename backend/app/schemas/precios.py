@@ -73,6 +73,8 @@ class BuscarPreciosResponse(BaseModel):
     resultados_por_plataforma: Optional[List[PlataformaResultado]] = None
     plataformas_consultadas: int = 0
     plataformas_con_resultados: int = 0
+    # Indica si la empresa tiene configuración de precios propia
+    configuracion_precios_activa: bool = False
 
 
 class CsvExcelRequest(BaseModel):

@@ -73,6 +73,8 @@ interface SearchResult {
   resultados_por_plataforma?: PlataformaResultado[];
   plataformas_consultadas?: number;
   plataformas_con_resultados?: number;
+  // Indica si la empresa tiene configuración de precios
+  configuracion_precios_activa?: boolean;
 }
 
 const PLATAFORMAS_DISPONIBLES = [
@@ -125,6 +127,11 @@ export default function SearchPage() {
   // Estado para fichar pieza
   const [idFichada, setIdFichada] = useState('');
   const [guardandoFichada, setGuardandoFichada] = useState(false);
+  
+  // Estado para modal de fichar con comentario
+  const [showModalFichada, setShowModalFichada] = useState(false);
+  const [idFichadaModal, setIdFichadaModal] = useState('');
+  const [comentarioFichada, setComentarioFichada] = useState('');
 
   useEffect(() => {
     loadFromStorage();
@@ -288,7 +295,7 @@ export default function SearchPage() {
 
   const guardarFichada = async () => {
     if (!idFichada.trim()) {
-      toast.error('Ingresa un ID de pieza');
+      toast.error('Introduce un ID de pieza');
       return;
     }
     setGuardandoFichada(true);
@@ -300,6 +307,32 @@ export default function SearchPage() {
       );
       toast.success(`Fichada: ${idFichada.trim().toUpperCase()}`);
       setIdFichada('');
+    } catch (error: any) {
+      toast.error(error.response?.data?.detail || 'Error al guardar');
+    } finally {
+      setGuardandoFichada(false);
+    }
+  };
+
+  const guardarFichadaConComentario = async () => {
+    if (!idFichadaModal.trim()) {
+      toast.error('Introduce un ID de pieza');
+      return;
+    }
+    setGuardandoFichada(true);
+    try {
+      await axios.post(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/registrar`,
+        { 
+          id_pieza: idFichadaModal.trim(),
+          descripcion: comentarioFichada.trim() || null
+        },
+        { withCredentials: true }
+      );
+      toast.success(`Fichada: ${idFichadaModal.trim().toUpperCase()}`);
+      setIdFichadaModal('');
+      setComentarioFichada('');
+      setShowModalFichada(false);
     } catch (error: any) {
       toast.error(error.response?.data?.detail || 'Error al guardar');
     } finally {
@@ -433,11 +466,14 @@ export default function SearchPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => router.push('/escaner')}
-                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-2 py-2 rounded-lg transition-colors text-sm"
-                  title="Escáner de códigos"
+                  onClick={() => setShowModalFichada(true)}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg transition-colors text-sm flex items-center gap-1"
+                  title="Fichar con comentario"
                 >
-                  📱
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+                  </svg>
+                  <span className="hidden sm:inline">+</span>
                 </button>
               </div>
             </div>
@@ -582,10 +618,10 @@ export default function SearchPage() {
               )}
 
               {/* Precio Sugerido e Imágenes en layout horizontal */}
-              {(result.sugerencia || (result.imagenes && result.imagenes.length > 0)) && (
+              {(result.sugerencia || !result.configuracion_precios_activa || (result.imagenes && result.imagenes.length > 0)) && (
                 <div className="mb-4 grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  {/* Precio Sugerido */}
-                  {result.sugerencia && (
+                  {/* Precio Sugerido o Mensaje de no configurado */}
+                  {result.sugerencia ? (
                     <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
                       <div className="flex items-center justify-between mb-2">
                         <h4 className="text-sm font-semibold text-yellow-800">Precio Sugerido</h4>
@@ -610,7 +646,22 @@ export default function SearchPage() {
                         ))}
                       </div>
                     </div>
-                  )}
+                  ) : !result.configuracion_precios_activa ? (
+                    <div className="bg-gray-100 border border-gray-300 rounded-lg p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-gray-500">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                        </svg>
+                        <h4 className="text-sm font-semibold text-gray-700">Precio Sugerido no disponible</h4>
+                      </div>
+                      <p className="text-xs text-gray-600">
+                        Tu empresa no tiene los archivos de precios configurados.
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Ve a <span className="font-medium">Configuración de Precios</span> para subir los archivos CSV.
+                      </p>
+                    </div>
+                  ) : null}
 
                   {/* Imágenes */}
                   {result.imagenes && result.imagenes.length > 0 && (
@@ -750,6 +801,72 @@ export default function SearchPage() {
               className="w-full h-auto max-h-[85vh] object-contain rounded-lg shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             />
+          </div>
+        </div>
+      )}
+
+      {/* Modal Fichar con Comentario */}
+      {showModalFichada && (
+        <div 
+          className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4"
+          onClick={() => setShowModalFichada(false)}
+        >
+          <div 
+            className="bg-white rounded-xl shadow-2xl w-full max-w-md p-6"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-gray-900">Fichar con Comentario</h3>
+              <button
+                onClick={() => setShowModalFichada(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">ID de Pieza *</label>
+                <input
+                  type="text"
+                  value={idFichadaModal}
+                  onChange={(e) => setIdFichadaModal(e.target.value)}
+                  placeholder="Introduce el ID de la pieza"
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  autoFocus
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Comentario (opcional)</label>
+                <textarea
+                  value={comentarioFichada}
+                  onChange={(e) => setComentarioFichada(e.target.value)}
+                  placeholder="Añade un comentario o descripción..."
+                  rows={3}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 resize-none"
+                />
+              </div>
+            </div>
+            
+            <div className="flex gap-3 mt-6">
+              <button
+                onClick={() => setShowModalFichada(false)}
+                className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={guardarFichadaConComentario}
+                disabled={guardandoFichada || !idFichadaModal.trim()}
+                className="flex-1 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-400 text-white rounded-lg transition-colors"
+              >
+                {guardandoFichada ? 'Guardando...' : 'Fichar'}
+              </button>
+            </div>
           </div>
         </div>
       )}

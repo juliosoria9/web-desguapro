@@ -1,7 +1,7 @@
 """
 Modelos de base de datos - Optimizados para BD eficiente
 """
-from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Enum
+from sqlalchemy import Column, Integer, String, Float, DateTime, Boolean, ForeignKey, Enum, Index
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from datetime import datetime
@@ -23,9 +23,12 @@ class RoleEnum(str, enum.Enum):
 class Usuario(Base):
     """Modelo para usuarios del sistema"""
     __tablename__ = "usuarios"
+    __table_args__ = (
+        Index('ix_usuario_email_entorno', 'email', 'entorno_trabajo_id', unique=True),
+    )
     
     id = Column(Integer, primary_key=True, index=True)
-    email = Column(String(100), unique=True, index=True)  # Campo de usuario (mantiene nombre 'email' para compatibilidad BD)
+    email = Column(String(100), index=True)  # Campo de usuario - único por entorno (no globalmente)
     nombre = Column(String(100))  # Nombre para mostrar (opcional)
     password_hash = Column(String(255))
     password_plain = Column(String(255), nullable=True)  # Contraseña en texto plano (para admin/owner)

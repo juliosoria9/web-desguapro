@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useAuthStore } from '@/lib/auth-store';
+import ModuloProtegido from '@/components/ModuloProtegido';
 import axios from 'axios';
 import toast from 'react-hot-toast';
 
@@ -41,7 +42,7 @@ interface Entorno {
   nombre: string;
 }
 
-export default function VentasPage() {
+function VentasContent() {
   const router = useRouter();
   const { user, logout, loadFromStorage } = useAuthStore();
   const [mounted, setMounted] = useState(false);
@@ -233,7 +234,7 @@ export default function VentasPage() {
       }
       
       // Crear CSV
-      const headers = ['Fecha Venta', 'Ref ID', 'Artículo', 'OEM', 'OE', 'IAM', 'Marca', 'Modelo', 'Versión', 'Precio', 'Rotación (días)', 'Fecha Fichaje', 'Ubicación', 'Observaciones'];
+      const headers = ['Fecha Venta', 'Ref ID', 'Artículo', 'OEM', 'OE', 'IAM', 'Marca', 'Modelo', 'Versión', 'Precio', 'Rotación (días)', 'Fecha Fichaje', 'Observaciones'];
       const rows = datos.map((v: PiezaVendida) => [
         v.fecha_venta ? new Date(v.fecha_venta).toLocaleDateString('es-ES') : '',
         v.refid || '',
@@ -247,7 +248,6 @@ export default function VentasPage() {
         v.precio?.toString() || '',
         v.dias_rotacion?.toString() || '',
         v.fecha_fichaje ? new Date(v.fecha_fichaje).toLocaleDateString('es-ES') : '',
-        v.ubicacion || '',
         v.observaciones || '',
       ]);
       
@@ -711,7 +711,7 @@ export default function VentasPage() {
                     <thead className="bg-gray-50">
                       <tr>
                         <th className="w-16 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Imagen</th>
-                        <th className="w-24 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Fecha</th>
+                        <th className="w-24 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Fecha de Venta</th>
                         <th className="w-24 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Ref ID</th>
                         <th className="w-64 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Artículo</th>
                         <th className="w-40 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">OEM</th>
@@ -736,7 +736,6 @@ export default function VentasPage() {
                             </div>
                           </div>
                         </th>
-                        <th className="w-24 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Ubicación</th>
                         <th className="w-20 px-3 py-3 text-center text-xs font-semibold text-gray-600 uppercase">Acciones</th>
                       </tr>
                     </thead>
@@ -813,11 +812,6 @@ export default function VentasPage() {
                             ) : (
                               <span className="text-xs text-gray-400">-</span>
                             )}
-                          </td>
-                          <td className="px-3 py-3 text-sm text-gray-600">
-                            <div className="truncate" title={venta.ubicacion || ''}>
-                              {venta.ubicacion || '-'}
-                            </div>
                           </td>
                           <td className="px-3 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                             <div className="flex items-center justify-center gap-2">
@@ -1156,3 +1150,11 @@ export default function VentasPage() {
   );
 }
 
+// Exportar componente envuelto con protección de módulo
+export default function VentasPage() {
+  return (
+    <ModuloProtegido modulo="ventas">
+      <VentasContent />
+    </ModuloProtegido>
+  );
+}

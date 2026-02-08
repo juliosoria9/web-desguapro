@@ -17,37 +17,77 @@ from app.models.busqueda import ResultadoStock, Usuario
 from app.dependencies import get_current_admin
 from core.scraper_factory import ScraperFactory
 from services.pricing import summarize
-from services.precio_sugerido import sugerir_precio, buscar_familia
+from services.precio_sugerido import sugerir_precio, buscar_familia, sugerir_precio_db
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Scraper global reutilizable (evita setup_session en cada petición)
+_ecooparts_scraper = None
+_scraper_last_setup = 0
 
-def procesar_item(item, scraper, umbral: float):
+# Caché de precios por OEM (evita búsquedas repetidas)
+_oem_cache = {}
+
+def get_ecooparts_scraper():
+    """Obtiene scraper de Ecooparts reutilizando sesión si es posible"""
+    global _ecooparts_scraper, _scraper_last_setup
+    
+    current_time = time.time()
+    # Re-crear scraper cada 5 minutos o si no existe
+    if _ecooparts_scraper is None or (current_time - _scraper_last_setup) > 300:
+        logger.info("Creando nueva sesión de Ecooparts scraper...")
+        _ecooparts_scraper = ScraperFactory.create_scraper("ecooparts")
+        if _ecooparts_scraper.setup_session("1K0959653C"):
+            _scraper_last_setup = current_time
+            logger.info("Sesión de Ecooparts creada correctamente")
+        else:
+            logger.error("No se pudo crear sesión de Ecooparts")
+            _ecooparts_scraper = None
+    
+    return _ecooparts_scraper
+
+
+def procesar_item(item, scraper, umbral: float, db: Session = None, entorno_trabajo_id: int = None):
     """Procesa un item de forma síncrona (para usar con ThreadPoolExecutor)"""
+    global _oem_cache
+    
     try:
-        # Buscar precios en Ecooparts
-        precios = scraper.fetch_prices(item.ref_oem, limit=50)
+        oem = item.ref_oem
         
-        if not precios:
-            return None
+        # Verificar caché primero
+        if oem in _oem_cache:
+            precios, precio_mercado = _oem_cache[oem]
+        else:
+            # Buscar precios en Ecooparts
+            precios = scraper.fetch_prices(oem, limit=50)
+            
+            if not precios:
+                _oem_cache[oem] = ([], 0)  # Cachear resultado vacío también
+                return None
+            
+            # Analizar precios
+            resumen = summarize(precios, remove_outliers=True)
+            precio_mercado = resumen.get('media', resumen.get('promedio', 0))
+            
+            # Guardar en caché
+            _oem_cache[oem] = (precios, precio_mercado)
         
-        # Analizar precios
-        resumen = summarize(precios, remove_outliers=True)
-        precio_mercado = resumen.get('media', resumen.get('promedio', 0))
-        
-        if precio_mercado <= 0:
+        if not precios or precio_mercado <= 0:
             return None
         
         # Calcular diferencia respecto al mercado
         diferencia = ((item.precio - precio_mercado) / precio_mercado) * 100
         
         # Buscar precio sugerido basado en familia
+        # SOLO usa la configuración de precios de la empresa del usuario
         precio_sugerido = None
         familia = ""
         
-        if item.tipo_pieza:
-            sugerencia = sugerir_precio(item.tipo_pieza, precio_mercado)
+        if item.tipo_pieza and db and entorno_trabajo_id:
+            # Usar configuración de la empresa (si no tiene, devuelve None)
+            sugerencia = sugerir_precio_db(db, entorno_trabajo_id, item.tipo_pieza, precio_mercado)
+            
             if sugerencia:
                 precio_sugerido = sugerencia.get("precio_sugerido")
                 familia = sugerencia.get("familia", "")
@@ -103,11 +143,10 @@ async def verificar_stock_masivo(
         logger.info(f"Usuario {usuario.email} verificando stock masivo - {len(request.items)} items")
         inicio = time.time()
         
-        # Crear scraper de Ecooparts
-        scraper = ScraperFactory.create_scraper("ecooparts")
+        # Obtener scraper reutilizable
+        scraper = get_ecooparts_scraper()
         
-        # Setup sesión
-        if not scraper.setup_session("1K0959653C"):
+        if not scraper:
             raise HTTPException(
                 status_code=500,
                 detail="No se pudo configurar sesión en Ecooparts"
@@ -116,40 +155,41 @@ async def verificar_stock_masivo(
         resultados = []
         items_con_outliers = 0
         
-        # Procesar items (secuencialmente con delay para no saturar)
+        # Procesar items (secuencialmente con delay mínimo)
+        # Obtener el entorno_trabajo_id del usuario para configuración de precios
+        entorno_id = usuario.entorno_trabajo_id
+        
         for i, item in enumerate(request.items):
             try:
-                resultado = procesar_item(item, scraper, request.umbral_diferencia)
+                resultado = procesar_item(item, scraper, request.umbral_diferencia, db, entorno_id)
                 
                 if resultado:
                     resultados.append(resultado)
                     if resultado.es_outlier:
                         items_con_outliers += 1
                     
-                    # Guardar en BD
-                    resultado_bd = ResultadoStock(
-                        ref_id=item.ref_id,
-                        ref_oem=item.ref_oem,
-                        precio_azeler=item.precio,
-                        precio_mercado=resultado.precio_mercado,
-                        diferencia_porcentaje=resultado.diferencia_porcentaje,
-                        es_outlier=resultado.es_outlier,
-                        precios_encontrados=resultado.precios_encontrados,
-                    )
-                    db.add(resultado_bd)
+                    # Guardar en BD (opcional, puede hacer lento)
+                    # resultado_bd = ResultadoStock(
+                    #     ref_id=item.ref_id,
+                    #     ref_oem=item.ref_oem,
+                    #     precio_azeler=item.precio,
+                    #     precio_mercado=resultado.precio_mercado,
+                    #     diferencia_porcentaje=resultado.diferencia_porcentaje,
+                    #     es_outlier=resultado.es_outlier,
+                    #     precios_encontrados=resultado.precios_encontrados,
+                    # )
+                    # db.add(resultado_bd)
                 
-                # Delay entre peticiones
-                await asyncio.sleep(request.delay)
-                
-                # Log progreso cada 10 items
-                if (i + 1) % 10 == 0:
-                    logger.info(f"Progreso: {i + 1}/{len(request.items)} items procesados")
+                # Delay mínimo entre peticiones (solo si hay más de 1 item)
+                if len(request.items) > 1:
+                    await asyncio.sleep(request.delay)
                 
             except Exception as e:
                 logger.warning(f"Error procesando item {i}: {str(e)}")
                 continue
         
-        db.commit()
+        # Commit deshabilitado temporalmente para velocidad
+        # db.commit()
         
         tiempo_procesamiento = time.time() - inicio
         logger.info(f"Verificación completada: {len(resultados)} items procesados en {tiempo_procesamiento:.2f}s")

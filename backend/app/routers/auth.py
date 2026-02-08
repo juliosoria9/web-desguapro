@@ -36,22 +36,51 @@ async def login(request: LoginRequest, req: Request, db: Session = Depends(get_d
         client_ip = req.client.host if req.client else None
         user_agent = req.headers.get("user-agent", "")[:255]
         
-        # Buscar usuario
-        usuario = db.query(Usuario).filter(
-            Usuario.email == request.email
-        ).first()
+        # Buscar usuarios con ese email
+        query = db.query(Usuario).filter(Usuario.email == request.email)
         
-        if not usuario or not usuario.activo:
+        # Si se especifica entorno_id, filtrar por él
+        if request.entorno_id:
+            query = query.filter(Usuario.entorno_trabajo_id == request.entorno_id)
+        
+        usuarios = query.all()
+        
+        # Filtrar solo los activos
+        usuarios_activos = [u for u in usuarios if u.activo]
+        
+        if not usuarios_activos:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Email o contraseña incorrectos",
+                detail="Usuario o contraseña incorrectos",
             )
         
-        # Verificar contraseña
-        if not verify_password(request.password, usuario.password_hash):
+        # Verificar contraseña en cada usuario encontrado
+        usuario = None
+        for u in usuarios_activos:
+            if verify_password(request.password, u.password_hash):
+                usuario = u
+                break
+        
+        if not usuario:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Email o contraseña incorrectos",
+                detail="Usuario o contraseña incorrectos",
+            )
+        
+        # Si hay más de un usuario con mismo email y contraseña, devolver lista de empresas
+        usuarios_validos = [u for u in usuarios_activos if verify_password(request.password, u.password_hash)]
+        if len(usuarios_validos) > 1 and not request.entorno_id:
+            # Obtener info de empresas
+            empresas = []
+            for u in usuarios_validos:
+                entorno = db.query(EntornoTrabajo).filter(EntornoTrabajo.id == u.entorno_trabajo_id).first()
+                empresas.append({
+                    "entorno_id": u.entorno_trabajo_id,
+                    "nombre": entorno.nombre if entorno else "Sin empresa"
+                })
+            raise HTTPException(
+                status_code=status.HTTP_300_MULTIPLE_CHOICES,
+                detail={"message": "Selecciona una empresa", "empresas": empresas}
             )
         
         # Log de login exitoso (desactivado temporalmente)
@@ -229,15 +258,19 @@ async def crear_usuario(
     - OWNER solo puede crear admin y user en su empresa
     """
     try:
-        # Verificar que no existe
+        # Determinar entorno destino
+        entorno_destino = request.entorno_trabajo_id or usuario_actual.entorno_trabajo_id
+        
+        # Verificar que no existe usuario con mismo email en ese entorno
         existente = db.query(Usuario).filter(
-            Usuario.email == request.email
+            Usuario.email == request.email,
+            Usuario.entorno_trabajo_id == entorno_destino
         ).first()
         
         if existente:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="El usuario ya existe",
+                detail="El usuario ya existe en esta empresa",
             )
         
         # Validar rol (ahora usamos strings directamente)

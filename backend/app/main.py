@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 import logging
 
 from app.config import settings
-from app.routers import precios, stock, plataformas, token, auth, desguace, precios_config, referencias, fichadas, ebay, admin, piezas
+from app.routers import precios, stock, plataformas, token, auth, desguace, precios_config, referencias, fichadas, ebay, admin, piezas, stockeo
 from services.scheduler import iniciar_scheduler, detener_scheduler
 
 # Configurar logging
@@ -63,6 +63,9 @@ app.include_router(piezas.router, prefix="/api/v1/piezas", tags=["piezas"])
 
 # Admin (auditoría y backups)
 app.include_router(admin.router, prefix="/api/v1", tags=["admin"])
+
+# Stockeo automático (solo sysowner)
+app.include_router(stockeo.router, prefix="/api/v1", tags=["stockeo"])
 
 # eBay API (sin autenticación - público para que eBay pueda verificar)
 app.include_router(ebay.router, prefix="/api/v1", tags=["ebay"])
