@@ -600,6 +600,7 @@ export default function StockPage() {
                         <tr>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Imagen</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Entrada</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Fichada por</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Ref ID</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Artículo</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">OEM</th>
@@ -639,8 +640,14 @@ export default function StockPage() {
                             </td>
                             <td className="px-4 py-3 text-xs text-gray-600">
                               <div>{pieza.fecha_fichaje ? new Date(pieza.fecha_fichaje).toLocaleDateString('es-ES') : (pieza.fecha_creacion ? new Date(pieza.fecha_creacion).toLocaleDateString('es-ES') : '-')}</div>
-                              {pieza.usuario_fichaje && (
-                                <div className="text-gray-400 truncate max-w-[80px]" title={pieza.usuario_fichaje}>{pieza.usuario_fichaje}</div>
+                            </td>
+                            <td className="px-4 py-3 text-xs text-gray-600">
+                              {pieza.usuario_fichaje ? (
+                                <span className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full font-medium truncate max-w-[100px] inline-block" title={pieza.usuario_fichaje}>
+                                  {pieza.usuario_fichaje}
+                                </span>
+                              ) : (
+                                <span className="text-gray-400">-</span>
                               )}
                             </td>
                             <td className="px-4 py-3">
@@ -874,6 +881,26 @@ export default function StockPage() {
                   </div>
                 </div>
               </div>
+
+              {/* Fichado por */}
+              {piezaDetalle.usuario_fichaje && (
+                <div className="mb-6">
+                  <div className="bg-indigo-50 rounded-xl p-4">
+                    <p className="text-xs text-indigo-600 font-medium mb-1 flex items-center gap-1">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z" />
+                      </svg>
+                      Fichada por
+                    </p>
+                    <p className="text-sm font-semibold text-indigo-800">{piezaDetalle.usuario_fichaje}</p>
+                    {piezaDetalle.fecha_fichaje && (
+                      <p className="text-xs text-indigo-500 mt-1">
+                        {new Date(piezaDetalle.fecha_fichaje).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                    )}
+                  </div>
+                </div>
+              )}
 
               {/* Ubicación y Observaciones */}
               <div className="grid grid-cols-2 gap-4">

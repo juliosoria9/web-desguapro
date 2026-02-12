@@ -1093,12 +1093,17 @@ async def obtener_stock(
         if not base:
             return {"piezas": [], "total": 0, "mensaje": "No hay base de datos cargada"}
         
-        # Query base
-        query = db.query(PiezaDesguace).filter(
+        # Query base con LEFT JOIN para búsqueda por usuario fichaje
+        from sqlalchemy.orm import aliased
+        UsuarioFichaje = aliased(Usuario)
+        
+        query = db.query(PiezaDesguace).outerjoin(
+            UsuarioFichaje, PiezaDesguace.usuario_fichaje_id == UsuarioFichaje.id
+        ).filter(
             PiezaDesguace.base_desguace_id == base.id
         )
         
-        # Filtro por búsqueda (refid, oem, oe, iam, articulo, marca, modelo)
+        # Filtro por búsqueda (refid, oem, oe, iam, articulo, marca, modelo, usuario_fichaje)
         if busqueda and busqueda.strip():
             termino = f"%{busqueda.strip()}%"
             query = query.filter(
@@ -1110,6 +1115,8 @@ async def obtener_stock(
                     PiezaDesguace.articulo.ilike(termino),
                     PiezaDesguace.marca.ilike(termino),
                     PiezaDesguace.modelo.ilike(termino),
+                    UsuarioFichaje.nombre.ilike(termino),
+                    UsuarioFichaje.email.ilike(termino),
                 )
             )
         

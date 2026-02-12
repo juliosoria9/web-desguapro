@@ -446,3 +446,98 @@ class ConfiguracionStockeo(Base):
     
     # Relaciones
     entorno_trabajo = relationship("EntornoTrabajo")
+
+
+# ============== TICKETS DE SOPORTE ==============
+class TipoTicket(str, enum.Enum):
+    """Tipos de tickets"""
+    REPORTE = "reporte"        # Reportar un problema/bug
+    SUGERENCIA = "sugerencia"  # Sugerir una mejora
+    DUDA = "duda"              # Preguntar una duda
+    OTRO = "otro"              # Otro tipo
+
+
+class EstadoTicket(str, enum.Enum):
+    """Estados de tickets"""
+    ABIERTO = "abierto"
+    EN_PROCESO = "en_proceso"
+    RESUELTO = "resuelto"
+    CERRADO = "cerrado"
+
+
+class Ticket(Base):
+    """Modelo para tickets de soporte"""
+    __tablename__ = "tickets"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id"))
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))  # Quién creó el ticket
+    
+    tipo = Column(String(20), default="otro")  # reporte, sugerencia, duda, otro
+    asunto = Column(String(200))
+    descripcion = Column(String(2000))
+    estado = Column(String(20), default="abierto")  # abierto, en_proceso, resuelto, cerrado
+    prioridad = Column(String(20), default="normal")  # baja, normal, alta, urgente
+    
+    fecha_creacion = Column(DateTime, default=now_spain_naive)
+    fecha_actualizacion = Column(DateTime, default=now_spain_naive, onupdate=now_spain_naive)
+    
+    # Relaciones
+    entorno_trabajo = relationship("EntornoTrabajo")
+    usuario = relationship("Usuario", foreign_keys=[usuario_id])
+    mensajes = relationship("TicketMensaje", back_populates="ticket", order_by="TicketMensaje.fecha_creacion")
+
+
+class TicketMensaje(Base):
+    """Modelo para mensajes de tickets (chat)"""
+    __tablename__ = "ticket_mensajes"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    ticket_id = Column(Integer, ForeignKey("tickets.id"))
+    usuario_id = Column(Integer, ForeignKey("usuarios.id"))  # Quién escribió el mensaje
+    
+    mensaje = Column(String(2000))
+    es_soporte = Column(Boolean, default=False)  # True si es respuesta del soporte
+    
+    fecha_creacion = Column(DateTime, default=now_spain_naive)
+    
+    # Relaciones
+    ticket = relationship("Ticket", back_populates="mensajes")
+    usuario = relationship("Usuario")
+
+
+# ============== LOGS DE PETICIONES API ==============
+class APIRequestLog(Base):
+    """Modelo para registrar todas las peticiones a la API"""
+    __tablename__ = "api_request_logs"
+    __table_args__ = (
+        Index('ix_api_logs_fecha', 'fecha'),
+        Index('ix_api_logs_entorno', 'entorno_trabajo_id'),
+        Index('ix_api_logs_usuario', 'usuario_id'),
+        Index('ix_api_logs_ruta', 'ruta'),
+    )
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    # Detalles de la petición
+    metodo = Column(String(10))  # GET, POST, PUT, DELETE, etc.
+    ruta = Column(String(255))  # /api/v1/precios/buscar
+    query_params = Column(String(500), nullable=True)  # Parámetros de query
+    status_code = Column(Integer)  # 200, 401, 500, etc.
+    duracion_ms = Column(Float)  # Tiempo de respuesta en ms
+    
+    # Usuario que hizo la petición
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
+    usuario_email = Column(String(100), nullable=True)
+    entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id", ondelete="SET NULL"), nullable=True)
+    entorno_nombre = Column(String(100), nullable=True)
+    rol = Column(String(20), nullable=True)
+    
+    # Metadata
+    ip_address = Column(String(45), nullable=True)
+    user_agent = Column(String(255), nullable=True)
+    fecha = Column(DateTime, default=now_spain_naive, index=True)
+    
+    # Relaciones
+    usuario = relationship("Usuario")
+    entorno_trabajo = relationship("EntornoTrabajo")

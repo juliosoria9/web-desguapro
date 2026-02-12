@@ -19,6 +19,7 @@ class TokenData(BaseModel):
     email: str
     rol: str
     entorno_trabajo_id: Optional[int] = None
+    entorno_nombre: Optional[str] = None
 
 
 def hash_password(password: str) -> str:
@@ -67,6 +68,7 @@ def decode_access_token(token: str) -> Optional[TokenData]:
         email: str = payload.get("email")
         rol: str = payload.get("rol")
         entorno_trabajo_id: Optional[int] = payload.get("entorno_trabajo_id")
+        entorno_nombre: Optional[str] = payload.get("entorno_nombre")
         
         if usuario_id is None or email is None:
             return None
@@ -75,7 +77,8 @@ def decode_access_token(token: str) -> Optional[TokenData]:
             usuario_id=usuario_id,
             email=email,
             rol=rol,
-            entorno_trabajo_id=entorno_trabajo_id
+            entorno_trabajo_id=entorno_trabajo_id,
+            entorno_nombre=entorno_nombre
         )
     except JWTError:
         return None

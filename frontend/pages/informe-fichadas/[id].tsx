@@ -352,13 +352,13 @@ export default function InformeFichadasPage() {
                 <ChartIcon />
                 Fichadas por Día
               </h2>
-              <div className="flex items-end gap-4 h-64 border-b border-l border-gray-200 pb-2 pl-2">
+              <div className="flex items-end gap-4 h-64 border-b border-l border-gray-200 pb-2 pl-2 overflow-visible pt-20">
                 {detalleSemana.dias.map((dia) => (
                   <div 
                     key={dia.fecha}
                     className="flex-1 flex flex-col items-center justify-end group relative"
                   >
-                    <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded py-2 px-3 whitespace-nowrap z-10">
+                    <div className="absolute left-1/2 -translate-x-1/2 top-0 -translate-y-full hidden group-hover:block bg-gray-900 text-white text-xs rounded py-2 px-3 whitespace-nowrap z-50 shadow-lg pointer-events-none">
                       <div className="font-medium">{dia.dia_semana} {dia.fecha.split('-')[2]}</div>
                       <div>Fichadas: {dia.total_fichadas}</div>
                       {dia.primera_hora && <div>Inicio: {dia.primera_hora}</div>}
@@ -366,6 +366,7 @@ export default function InformeFichadasPage() {
                       {dia.tiempo_promedio_entre_piezas && (
                         <div>Tiempo/pieza: {dia.tiempo_promedio_entre_piezas} min</div>
                       )}
+                      <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
                     </div>
                     
                     <span className="text-sm font-bold text-gray-700 mb-1">
@@ -566,7 +567,7 @@ export default function InformeFichadasPage() {
                 <ChartIcon />
                 Fichadas por {tipoVista === 'semana' ? 'Semana' : 'Mes'}
               </h2>
-              <div className="flex items-end gap-4 h-64 border-b border-l border-gray-200 pb-2 pl-2 overflow-x-auto">
+              <div className="flex items-end gap-4 h-64 border-b border-l border-gray-200 pb-2 pl-2 overflow-visible pt-20">
                 {informe.periodos.map((dato) => {
                   const maxPeriodo = Math.max(...informe.periodos.map(d => d.total_fichadas), 1);
                   const promedio = informe.promedio_general;
@@ -576,11 +577,12 @@ export default function InformeFichadasPage() {
                       key={dato.periodo}
                       className="flex-1 flex flex-col items-center justify-end group relative min-w-[60px]"
                     >
-                      <div className="absolute bottom-full mb-2 hidden group-hover:block bg-gray-900 text-white text-xs rounded py-2 px-3 whitespace-nowrap z-10">
+                      <div className="absolute left-1/2 -translate-x-1/2 top-0 -translate-y-full hidden group-hover:block bg-gray-900 text-white text-xs rounded py-2 px-3 whitespace-nowrap z-50 shadow-lg pointer-events-none">
                         <div className="font-medium">{dato.label}</div>
                         <div>Fichadas: {dato.total_fichadas}</div>
                         <div>Días: {dato.dias_trabajados}</div>
                         <div>Tiempo promedio: {dato.tiempo_promedio_entre_piezas?.toFixed(1) || '-'} min</div>
+                        <div className="absolute left-1/2 -translate-x-1/2 top-full w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"></div>
                       </div>
                       
                       <span className="text-sm font-bold text-gray-700 mb-1">

@@ -10,7 +10,7 @@ from datetime import datetime, date, timedelta
 
 from app.database import get_db
 from app.dependencies import get_current_user
-from app.models.busqueda import FichadaPieza, Usuario, EntornoTrabajo, VerificacionFichada, PiezaDesguace, BaseDesguace
+from app.models.busqueda import FichadaPieza, Usuario, EntornoTrabajo, VerificacionFichada, PiezaDesguace, BaseDesguace, PiezaVendida
 from services.audit import AuditService
 
 router = APIRouter(tags=["fichadas"])
@@ -174,6 +174,12 @@ async def registrar_fichada(
             func.upper(PiezaDesguace.refid) == id_pieza_upper
         ).first()
         en_stock = pieza_existe is not None
+        
+        # Si la pieza existe, actualizar quien la fichó
+        if pieza_existe:
+            pieza_existe.fecha_fichaje = nueva_fichada.fecha_fichada
+            pieza_existe.usuario_fichaje_id = current_user.id
+            db.commit()
     
     # Crear verificación automática
     verificacion = VerificacionFichada(
@@ -338,23 +344,19 @@ async def obtener_detalle_usuario(
             total=0
         )
     
-    ahora = datetime.now()
-    limite_verificacion = ahora - timedelta(days=1)
-    
-    # Separar fichadas recientes de antiguas
-    fichadas_recientes = [f for f in fichadas if f.fecha_fichada >= limite_verificacion]
-    fichadas_antiguas = [f for f in fichadas if f.fecha_fichada < limite_verificacion]
-    
-    # Para fichadas recientes: verificar en tiempo real
+    # SIEMPRE verificar en tiempo real (stock actual + vendidas)
     datos_piezas_por_refid = {}
-    piezas_en_stock = set()
+    piezas_pasaron_por_bd = set()
     
     base = db.query(BaseDesguace).filter(
         BaseDesguace.entorno_trabajo_id == target_entorno_id
     ).first()
     
-    if fichadas_recientes and base:
-        refids_recientes = set(f.id_pieza.strip().upper() for f in fichadas_recientes)
+    if base:
+        # Obtener todos los refids de las fichadas
+        refids_fichadas = set(f.id_pieza.strip().upper() for f in fichadas)
+        
+        # Verificar en stock actual
         piezas = db.query(
             PiezaDesguace.refid,
             PiezaDesguace.imagen,
@@ -363,107 +365,43 @@ async def obtener_detalle_usuario(
             PiezaDesguace.modelo
         ).filter(
             PiezaDesguace.base_desguace_id == base.id,
-            func.upper(PiezaDesguace.refid).in_(refids_recientes)
+            func.upper(PiezaDesguace.refid).in_(refids_fichadas)
         ).all()
         
         for pieza in piezas:
             if pieza.refid:
                 refid_upper = pieza.refid.strip().upper()
-                piezas_en_stock.add(refid_upper)
+                piezas_pasaron_por_bd.add(refid_upper)
                 datos_piezas_por_refid[refid_upper] = {
                     'imagen': pieza.imagen,
                     'articulo': pieza.articulo,
                     'marca': pieza.marca,
                     'modelo': pieza.modelo
                 }
-    
-    # Para fichadas antiguas: buscar verificaciones guardadas
-    verificaciones_guardadas = {}
-    fichadas_antiguas_sin_verificar = []
-    
-    if fichadas_antiguas:
-        fichada_ids_antiguos = [f.id for f in fichadas_antiguas]
         
-        from sqlalchemy import and_
-        subquery = db.query(
-            VerificacionFichada.fichada_id,
-            func.max(VerificacionFichada.fecha_verificacion).label('max_fecha')
+        # También verificar en piezas vendidas (ya pasaron por la BD)
+        piezas_vendidas = db.query(
+            PiezaVendida.refid,
+            PiezaVendida.imagen,
+            PiezaVendida.articulo,
+            PiezaVendida.marca,
+            PiezaVendida.modelo
         ).filter(
-            VerificacionFichada.fichada_id.in_(fichada_ids_antiguos)
-        ).group_by(VerificacionFichada.fichada_id).subquery()
-        
-        ultimas_verificaciones = db.query(VerificacionFichada).join(
-            subquery,
-            and_(
-                VerificacionFichada.fichada_id == subquery.c.fichada_id,
-                VerificacionFichada.fecha_verificacion == subquery.c.max_fecha
-            )
+            PiezaVendida.entorno_trabajo_id == target_entorno_id,
+            func.upper(PiezaVendida.refid).in_(refids_fichadas)
         ).all()
         
-        verificaciones_guardadas = {v.fichada_id: v.en_stock for v in ultimas_verificaciones}
-        
-        # Fichadas antiguas sin verificación guardada
-        fichadas_antiguas_sin_verificar = [
-            f for f in fichadas_antiguas 
-            if f.id not in verificaciones_guardadas
-        ]
-    
-    # Para fichadas antiguas sin verificación: verificar en tiempo real
-    piezas_antiguas_en_stock = set()
-    datos_piezas_antiguas = {}
-    
-    if fichadas_antiguas_sin_verificar and base:
-        refids_antiguos = set(f.id_pieza.strip().upper() for f in fichadas_antiguas_sin_verificar)
-        piezas = db.query(
-            PiezaDesguace.refid,
-            PiezaDesguace.imagen,
-            PiezaDesguace.articulo,
-            PiezaDesguace.marca,
-            PiezaDesguace.modelo
-        ).filter(
-            PiezaDesguace.base_desguace_id == base.id,
-            func.upper(PiezaDesguace.refid).in_(refids_antiguos)
-        ).all()
-        
-        for pieza in piezas:
+        for pieza in piezas_vendidas:
             if pieza.refid:
                 refid_upper = pieza.refid.strip().upper()
-                piezas_antiguas_en_stock.add(refid_upper)
-                datos_piezas_antiguas[refid_upper] = {
-                    'imagen': pieza.imagen,
-                    'articulo': pieza.articulo,
-                    'marca': pieza.marca,
-                    'modelo': pieza.modelo
-                }
-    
-    # También cargar datos de piezas para fichadas antiguas con verificación=True
-    refids_antiguos_verificados = set(
-        f.id_pieza.strip().upper() 
-        for f in fichadas_antiguas 
-        if f.id in verificaciones_guardadas and verificaciones_guardadas[f.id] == True
-    )
-    
-    if refids_antiguos_verificados and base:
-        piezas = db.query(
-            PiezaDesguace.refid,
-            PiezaDesguace.imagen,
-            PiezaDesguace.articulo,
-            PiezaDesguace.marca,
-            PiezaDesguace.modelo
-        ).filter(
-            PiezaDesguace.base_desguace_id == base.id,
-            func.upper(PiezaDesguace.refid).in_(refids_antiguos_verificados)
-        ).all()
-        
-        for pieza in piezas:
-            if pieza.refid:
-                refid_upper = pieza.refid.strip().upper()
-                datos_piezas_antiguas[refid_upper] = {
-                    'imagen': pieza.imagen,
-                    'articulo': pieza.articulo,
-                    'marca': pieza.marca,
-                    'modelo': pieza.modelo
-                }
+                piezas_pasaron_por_bd.add(refid_upper)
+                if refid_upper not in datos_piezas_por_refid:
+                    datos_piezas_por_refid[refid_upper] = {
+                        'imagen': pieza.imagen,
+                        'articulo': pieza.articulo,
+                        'marca': pieza.marca,
+                        'modelo': pieza.modelo
+                    }
     
     detalles = []
     anterior = None
@@ -477,19 +415,9 @@ async def obtener_detalle_usuario(
         color = calcular_color_tiempo(minutos_desde_anterior)
         refid_upper = fichada.id_pieza.strip().upper()
         
-        # Determinar en_stock según el caso
-        if fichada.fecha_fichada >= limite_verificacion:
-            # Fichada reciente: verificar en tiempo real
-            en_stock = refid_upper in piezas_en_stock
-            datos_pieza = datos_piezas_por_refid.get(refid_upper)
-        elif fichada.id in verificaciones_guardadas:
-            # Fichada antigua con verificación guardada
-            en_stock = verificaciones_guardadas[fichada.id]
-            datos_pieza = datos_piezas_antiguas.get(refid_upper)
-        else:
-            # Fichada antigua sin verificación: verificar en tiempo real
-            en_stock = refid_upper in piezas_antiguas_en_stock
-            datos_pieza = datos_piezas_antiguas.get(refid_upper)
+        # Verificar en tiempo real
+        en_stock = refid_upper in piezas_pasaron_por_bd
+        datos_pieza = datos_piezas_por_refid.get(refid_upper)
         
         # Obtener datos de la pieza si está en stock
         imagen_pieza = None
@@ -530,11 +458,11 @@ async def obtener_detalle_usuario(
 @router.get("/mis-fichadas", response_model=List[FichadaResponse])
 async def obtener_mis_fichadas(
     fecha: Optional[str] = None,
-    limite: int = 50,
+    limite: int = 5000,
     db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_user)
 ):
-    """Obtener mis fichadas del día"""
+    """Obtener mis fichadas (límite configurable)"""
     query = db.query(FichadaPieza).filter(
         FichadaPieza.usuario_id == current_user.id
     )
@@ -551,87 +479,35 @@ async def obtener_mis_fichadas(
     if not fichadas:
         return []
     
-    ahora = datetime.now()
-    limite_verificacion = ahora - timedelta(days=1)
+    # SIEMPRE verificar en tiempo real (stock actual + vendidas)
+    piezas_pasaron_por_bd = set()
     
-    # Separar fichadas recientes de antiguas
-    fichadas_recientes = [f for f in fichadas if f.fecha_fichada >= limite_verificacion]
-    fichadas_antiguas = [f for f in fichadas if f.fecha_fichada < limite_verificacion]
+    base = db.query(BaseDesguace).filter(
+        BaseDesguace.entorno_trabajo_id == current_user.entorno_trabajo_id
+    ).first()
     
-    # Para fichadas recientes: verificar en tiempo real
-    piezas_en_stock = set()
-    if fichadas_recientes:
-        base = db.query(BaseDesguace).filter(
-            BaseDesguace.entorno_trabajo_id == current_user.entorno_trabajo_id
-        ).first()
+    if base:
+        # Obtener todos los refids de las fichadas
+        refids_fichadas = set(f.id_pieza.strip().upper() for f in fichadas)
         
-        if base:
-            refids_fichadas = set(f.id_pieza.strip().upper() for f in fichadas_recientes)
-            piezas_existentes = db.query(PiezaDesguace.refid).filter(
-                PiezaDesguace.base_desguace_id == base.id,
-                func.upper(PiezaDesguace.refid).in_(refids_fichadas)
-            ).all()
-            piezas_en_stock = set(p.refid.strip().upper() for p in piezas_existentes if p.refid)
-    
-    # Para fichadas antiguas: buscar verificaciones guardadas
-    verificaciones_guardadas = {}
-    fichadas_antiguas_sin_verificar = []
-    
-    if fichadas_antiguas:
-        fichada_ids_antiguos = [f.id for f in fichadas_antiguas]
-        
-        # Buscar verificaciones guardadas
-        from sqlalchemy import and_
-        subquery = db.query(
-            VerificacionFichada.fichada_id,
-            func.max(VerificacionFichada.fecha_verificacion).label('max_fecha')
-        ).filter(
-            VerificacionFichada.fichada_id.in_(fichada_ids_antiguos)
-        ).group_by(VerificacionFichada.fichada_id).subquery()
-        
-        ultimas_verificaciones = db.query(VerificacionFichada).join(
-            subquery,
-            and_(
-                VerificacionFichada.fichada_id == subquery.c.fichada_id,
-                VerificacionFichada.fecha_verificacion == subquery.c.max_fecha
-            )
+        # Verificar en stock actual
+        piezas_existentes = db.query(PiezaDesguace.refid).filter(
+            PiezaDesguace.base_desguace_id == base.id,
+            func.upper(PiezaDesguace.refid).in_(refids_fichadas)
         ).all()
+        piezas_pasaron_por_bd = set(p.refid.strip().upper() for p in piezas_existentes if p.refid)
         
-        verificaciones_guardadas = {v.fichada_id: v.en_stock for v in ultimas_verificaciones}
-        
-        # Identificar fichadas antiguas SIN verificación guardada
-        fichadas_antiguas_sin_verificar = [
-            f for f in fichadas_antiguas 
-            if f.id not in verificaciones_guardadas
-        ]
-    
-    # Para fichadas antiguas sin verificación: verificar en tiempo real
-    piezas_antiguas_en_stock = set()
-    if fichadas_antiguas_sin_verificar:
-        base = db.query(BaseDesguace).filter(
-            BaseDesguace.entorno_trabajo_id == current_user.entorno_trabajo_id
-        ).first()
-        
-        if base:
-            refids_antiguos = set(f.id_pieza.strip().upper() for f in fichadas_antiguas_sin_verificar)
-            piezas_existentes = db.query(PiezaDesguace.refid).filter(
-                PiezaDesguace.base_desguace_id == base.id,
-                func.upper(PiezaDesguace.refid).in_(refids_antiguos)
-            ).all()
-            piezas_antiguas_en_stock = set(p.refid.strip().upper() for p in piezas_existentes if p.refid)
+        # También verificar en piezas vendidas (ya pasaron por la BD)
+        piezas_vendidas = db.query(PiezaVendida.refid).filter(
+            PiezaVendida.entorno_trabajo_id == current_user.entorno_trabajo_id,
+            func.upper(PiezaVendida.refid).in_(refids_fichadas)
+        ).all()
+        piezas_pasaron_por_bd.update(p.refid.strip().upper() for p in piezas_vendidas if p.refid)
     
     # Construir respuesta
     resultado = []
     for f in fichadas:
-        if f.fecha_fichada >= limite_verificacion:
-            # Fichada reciente: verificar en tiempo real
-            en_stock = f.id_pieza.strip().upper() in piezas_en_stock
-        elif f.id in verificaciones_guardadas:
-            # Fichada antigua con verificación guardada: usar valor guardado
-            en_stock = verificaciones_guardadas[f.id]
-        else:
-            # Fichada antigua sin verificación: verificar en tiempo real
-            en_stock = f.id_pieza.strip().upper() in piezas_antiguas_en_stock
+        en_stock = f.id_pieza.strip().upper() in piezas_pasaron_por_bd
         
         resultado.append(FichadaResponse(
             id=f.id,

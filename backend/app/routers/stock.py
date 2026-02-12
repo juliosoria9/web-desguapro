@@ -48,7 +48,7 @@ def get_ecooparts_scraper():
     return _ecooparts_scraper
 
 
-def procesar_item(item, scraper, umbral: float, db: Session = None, entorno_trabajo_id: int = None):
+def procesar_item(item, scraper, umbral: float, piezas_minimas: int = 3, db: Session = None, entorno_trabajo_id: int = None):
     """Procesa un item de forma síncrona (para usar con ThreadPoolExecutor)"""
     global _oem_cache
     
@@ -62,7 +62,7 @@ def procesar_item(item, scraper, umbral: float, db: Session = None, entorno_trab
             # Buscar precios en Ecooparts
             precios = scraper.fetch_prices(oem, limit=50)
             
-            if not precios:
+            if not precios or len(precios) < piezas_minimas:
                 _oem_cache[oem] = ([], 0)  # Cachear resultado vacío también
                 return None
             
@@ -73,7 +73,7 @@ def procesar_item(item, scraper, umbral: float, db: Session = None, entorno_trab
             # Guardar en caché
             _oem_cache[oem] = (precios, precio_mercado)
         
-        if not precios or precio_mercado <= 0:
+        if not precios or len(precios) < piezas_minimas or precio_mercado <= 0:
             return None
         
         # Calcular diferencia respecto al mercado
@@ -161,7 +161,7 @@ async def verificar_stock_masivo(
         
         for i, item in enumerate(request.items):
             try:
-                resultado = procesar_item(item, scraper, request.umbral_diferencia, db, entorno_id)
+                resultado = procesar_item(item, scraper, request.umbral_diferencia, request.piezas_minimas, db, entorno_id)
                 
                 if resultado:
                     resultados.append(resultado)

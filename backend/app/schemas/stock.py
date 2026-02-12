@@ -60,6 +60,7 @@ class CheckStockMasivoRequest(BaseModel):
     """Request para checkeo masivo con columnas mapeadas"""
     items: List[StockMasivoItem] = Field(..., description="Items a verificar")
     umbral_diferencia: float = Field(default=20.0, ge=5, le=50, description="Umbral de diferencia en %")
+    piezas_minimas: int = Field(default=3, ge=1, le=10, description="Número mínimo de precios para calcular media")
     workers: int = Field(default=5, ge=1, le=30, description="Workers paralelos")
     delay: float = Field(default=0.0, ge=0.0, le=5.0, description="Delay entre peticiones")
 

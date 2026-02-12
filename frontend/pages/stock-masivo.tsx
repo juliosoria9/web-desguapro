@@ -63,6 +63,7 @@ function StockMasivoContent() {
   
   // Opciones de procesamiento
   const [umbral, setUmbral] = useState(20);
+  const [piezasMinimas, setPiezasMinimas] = useState(3);
   
   // Resultados
   const [result, setResult] = useState<CheckResponse | null>(null);
@@ -482,7 +483,7 @@ function StockMasivoContent() {
     abortControllerRef.current = new AbortController();
     
     addLog('Iniciando verificación de stock...', 'info');
-    addLog(`Configuración: Umbral ${umbral}%`, 'info');
+    addLog(`Configuración: Umbral ${umbral}%, Piezas mínimas: ${piezasMinimas}`, 'info');
     if (ignorarBaratas) addLog('Filtro activo: Ignorar piezas mas baratas que precio mercado', 'info');
     if (tiposExcluidos.length > 0) addLog(`Tipos excluidos: ${tiposExcluidos.join(', ')}`, 'info');
     if (idsToExclude.size > 0) addLog(`IDs a excluir del CSV secundario: ${idsToExclude.size}`, 'info');
@@ -551,6 +552,7 @@ function StockMasivoContent() {
             {
               items: [item], // Solo 1 item por petición
               umbral_diferencia: umbral,
+              piezas_minimas: piezasMinimas,
               workers: 1,
               delay: 0,
             },
@@ -1177,7 +1179,7 @@ function StockMasivoContent() {
                 </svg>
                 Opciones de Procesamiento
               </h3>
-              <div className="grid grid-cols-1 gap-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
                   <label className="block text-sm font-medium text-gray-700 mb-2">
                     Umbral Diferencia: {umbral}%
@@ -1191,6 +1193,20 @@ function StockMasivoContent() {
                     className="w-full accent-blue-600"
                   />
                   <p className="text-xs text-gray-500 mt-1">Marca como outlier si la diferencia supera este %</p>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Piezas Mínimas: {piezasMinimas}
+                  </label>
+                  <input
+                    type="range"
+                    min="1"
+                    max="10"
+                    value={piezasMinimas}
+                    onChange={(e) => setPiezasMinimas(parseInt(e.target.value))}
+                    className="w-full accent-indigo-600"
+                  />
+                  <p className="text-xs text-gray-500 mt-1">Número mínimo de precios para calcular la media</p>
                 </div>
               </div>
               

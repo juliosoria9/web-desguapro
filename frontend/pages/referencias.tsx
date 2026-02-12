@@ -26,6 +26,9 @@ interface BusquedaResponse {
   errores: { [key: string]: string };
   total_encontrados: number;
   proveedores_con_resultados: number;
+  precio_mercado?: number;
+  precio_sugerido?: number;
+  precios_encontrados?: number;
 }
 
 const PROVEEDORES_COLORES: { [key: string]: string } = {
@@ -313,6 +316,43 @@ function ReferenciasContent() {
                 )}
               </div>
             </div>
+
+            {/* Precio recomendado */}
+            {(result.precio_mercado || result.precio_sugerido) && (
+              <div className="bg-gradient-to-r from-emerald-50 to-teal-50 rounded-lg shadow p-4 border border-emerald-200">
+                <h4 className="font-semibold text-emerald-800 mb-3 flex items-center gap-2">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  Precio Recomendado
+                </h4>
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                  {result.precio_mercado && (
+                    <div className="bg-white rounded-lg p-3 border border-emerald-100">
+                      <p className="text-xs text-gray-500 mb-1">Precio Mercado (Ecooparts)</p>
+                      <p className="text-xl font-bold text-gray-800">{result.precio_mercado.toFixed(2)} €</p>
+                      {result.precios_encontrados && (
+                        <p className="text-xs text-gray-400 mt-1">Basado en {result.precios_encontrados} precios</p>
+                      )}
+                    </div>
+                  )}
+                  {result.precio_sugerido && (
+                    <div className="bg-emerald-100 rounded-lg p-3 border-2 border-emerald-400">
+                      <p className="text-xs text-emerald-600 mb-1 font-medium">Precio Sugerido de Venta</p>
+                      <p className="text-2xl font-bold text-emerald-700">{result.precio_sugerido.toFixed(0)} €</p>
+                      <p className="text-xs text-emerald-500 mt-1">Sin IVA (55% del mercado)</p>
+                    </div>
+                  )}
+                  {result.precio_sugerido && (
+                    <div className="bg-white rounded-lg p-3 border border-emerald-100">
+                      <p className="text-xs text-gray-500 mb-1">Con IVA (21%)</p>
+                      <p className="text-xl font-bold text-gray-800">{(result.precio_sugerido * 1.21).toFixed(2)} €</p>
+                      <p className="text-xs text-gray-400 mt-1">Precio final al cliente</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Lista de proveedores y resultados */}
             {Object.entries(result.resultados).map(([proveedor, items]) => (

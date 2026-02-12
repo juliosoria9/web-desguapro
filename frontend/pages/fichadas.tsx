@@ -199,7 +199,7 @@ function FichadasContent() {
     setCargandoMisFichadas(true);
     try {
       const response = await axios.get<MiFichada[]>(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/mis-fichadas?fecha=${fechaFiltro}&limite=100`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/fichadas/mis-fichadas?fecha=${fechaFiltro}&limite=5000`,
         { withCredentials: true }
       );
       setMisFichadas(response.data);

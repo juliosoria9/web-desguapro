@@ -8,8 +8,9 @@ from fastapi.responses import JSONResponse
 import logging
 
 from app.config import settings
-from app.routers import precios, stock, plataformas, token, auth, desguace, precios_config, referencias, fichadas, ebay, admin, piezas, stockeo
+from app.routers import precios, stock, plataformas, token, auth, desguace, precios_config, referencias, fichadas, ebay, admin, piezas, stockeo, tickets
 from services.scheduler import iniciar_scheduler, detener_scheduler
+from app.middleware.request_logger import RequestLoggerMiddleware
 
 # Configurar logging
 logging.basicConfig(level=settings.log_level)
@@ -45,6 +46,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Request Logger middleware - registra todas las peticiones API
+app.add_middleware(RequestLoggerMiddleware)
+
 
 # ============== ROUTERS ==============
 # Auth (sin autenticación)
@@ -66,6 +70,9 @@ app.include_router(admin.router, prefix="/api/v1", tags=["admin"])
 
 # Stockeo automático (solo sysowner)
 app.include_router(stockeo.router, prefix="/api/v1", tags=["stockeo"])
+
+# Tickets de soporte
+app.include_router(tickets.router, prefix="/api/v1/tickets", tags=["tickets"])
 
 # eBay API (sin autenticación - público para que eBay pueda verificar)
 app.include_router(ebay.router, prefix="/api/v1", tags=["ebay"])

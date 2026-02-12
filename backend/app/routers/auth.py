@@ -86,23 +86,26 @@ async def login(request: LoginRequest, req: Request, db: Session = Depends(get_d
         # Log de login exitoso (desactivado temporalmente)
         # AuditService.log_login(db, usuario, client_ip, user_agent, exitoso=True)
         
-        # Crear token
-        token_data = {
-            "usuario_id": usuario.id,
-            "email": usuario.email,
-            "rol": usuario.rol,
-            "entorno_trabajo_id": usuario.entorno_trabajo_id,
-        }
-        access_token = create_access_token(token_data)
-        
-        # Obtener nombre del entorno
+        # Obtener nombre del entorno para incluir en el token
         entorno_nombre = None
         modulos = None
         if usuario.entorno_trabajo_id:
             entorno = db.query(EntornoTrabajo).filter(EntornoTrabajo.id == usuario.entorno_trabajo_id).first()
             if entorno:
                 entorno_nombre = entorno.nombre
-                # Incluir módulos activos
+        
+        # Crear token incluyendo el nombre del entorno
+        token_data = {
+            "usuario_id": usuario.id,
+            "email": usuario.email,
+            "rol": usuario.rol,
+            "entorno_trabajo_id": usuario.entorno_trabajo_id,
+            "entorno_nombre": entorno_nombre,
+        }
+        access_token = create_access_token(token_data)
+        
+        # Obtener módulos
+        if usuario.entorno_trabajo_id and entorno:
                 modulos = {
                     "fichadas": entorno.modulo_fichadas if entorno.modulo_fichadas is not None else True,
                     "stock_masivo": entorno.modulo_stock_masivo if entorno.modulo_stock_masivo is not None else True,

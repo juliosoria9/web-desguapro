@@ -2,13 +2,17 @@
 Router para cruce de referencias OEM a IAM
 """
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 from pydantic import BaseModel
 from typing import List, Dict, Optional, Any
 import logging
 
 from app.dependencies import get_current_user
+from app.database import get_db
 from app.models.busqueda import Usuario
 from app.scrapers.referencias import buscar_en_todos, obtener_primera_referencia_por_proveedor
+from core.scraper_factory import ScraperFactory
+from services.pricing import summarize
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -33,6 +37,9 @@ class BuscarReferenciasResponse(BaseModel):
     errores: Dict[str, str]
     total_encontrados: int
     proveedores_con_resultados: int
+    precio_mercado: Optional[float] = None
+    precio_sugerido: Optional[float] = None
+    precios_encontrados: int = 0
 
 
 class ReferenciasRapidasResponse(BaseModel):
@@ -44,11 +51,13 @@ class ReferenciasRapidasResponse(BaseModel):
 @router.post("/buscar", response_model=BuscarReferenciasResponse)
 async def buscar_referencias(
     request: BuscarReferenciasRequest,
+    db: Session = Depends(get_db),
     current_user: Usuario = Depends(get_current_user)
 ):
     """
     Busca referencias IAM equivalentes a partir de una referencia OEM.
     Ejecuta la búsqueda en todos los proveedores disponibles en paralelo.
+    También obtiene el precio de mercado de Ecooparts.
     """
     referencia = request.referencia.strip()
     
@@ -66,12 +75,39 @@ async def buscar_referencias(
         total_encontrados = sum(len(items) for items in resultados.values())
         proveedores_con_resultados = len(resultados)
         
+        # Obtener precio de mercado de Ecooparts
+        precio_mercado = None
+        precio_sugerido = None
+        precios_encontrados = 0
+        
+        try:
+            scraper = ScraperFactory.create_scraper("ecooparts")
+            if scraper.setup_session(referencia):
+                precios = scraper.fetch_prices(referencia, limit=50)
+                if precios:
+                    precios_encontrados = len(precios)
+                    resumen = summarize(precios, remove_outliers=True)
+                    precio_mercado = resumen.get('media', resumen.get('promedio', 0))
+                    
+                    # Calcular precio sugerido (55% del precio sin IVA, mínimo 10€)
+                    if precio_mercado and precio_mercado > 0:
+                        precio_sin_iva = precio_mercado / 1.21
+                        precio_sugerido = round(precio_sin_iva * 0.55, -1)
+                        if precio_sugerido < 10:
+                            precio_sugerido = 10
+                        logger.info(f"Precio mercado: {precio_mercado:.2f}€, Sugerido: {precio_sugerido:.2f}€")
+        except Exception as e:
+            logger.warning(f"No se pudo obtener precio de mercado: {e}")
+        
         return BuscarReferenciasResponse(
             referencia_oem=referencia,
             resultados=resultados,
             errores=errores,
             total_encontrados=total_encontrados,
-            proveedores_con_resultados=proveedores_con_resultados
+            proveedores_con_resultados=proveedores_con_resultados,
+            precio_mercado=precio_mercado,
+            precio_sugerido=precio_sugerido,
+            precios_encontrados=precios_encontrados
         )
     except Exception as e:
         logger.error(f"Error buscando referencias: {e}")
