@@ -83,8 +83,8 @@ async def login(request: LoginRequest, req: Request, db: Session = Depends(get_d
                 detail={"message": "Selecciona una empresa", "empresas": empresas}
             )
         
-        # Log de login exitoso (desactivado temporalmente)
-        # AuditService.log_login(db, usuario, client_ip, user_agent, exitoso=True)
+        # Log de login exitoso
+        AuditService.log_login(db, usuario, client_ip, user_agent, exitoso=True)
         
         # Obtener nombre del entorno para incluir en el token
         entorno_nombre = None
@@ -116,6 +116,7 @@ async def login(request: LoginRequest, req: Request, db: Session = Depends(get_d
                     "importacion_csv": entorno.modulo_importacion_csv if entorno.modulo_importacion_csv is not None else True,
                     "inventario_piezas": entorno.modulo_inventario_piezas if hasattr(entorno, 'modulo_inventario_piezas') and entorno.modulo_inventario_piezas is not None else True,
                     "estudio_coches": entorno.modulo_estudio_coches if hasattr(entorno, 'modulo_estudio_coches') and entorno.modulo_estudio_coches is not None else True,
+                    "paqueteria": entorno.modulo_paqueteria if hasattr(entorno, 'modulo_paqueteria') and entorno.modulo_paqueteria is not None else True,
                 }
         
         # Crear response con entorno_nombre y módulos
@@ -190,62 +191,9 @@ async def obtener_usuario_actual(
     return UsuarioResponse.model_validate(usuario)
 
 
-# ============== VER CONTRASEÑA (SEGÚN JERARQUÍA) ==============
-@router.get("/usuarios/{usuario_id}/password")
-async def ver_password_usuario(
-    usuario_id: int,
-    db: Session = Depends(get_db),
-    usuario_actual: Usuario = Depends(get_current_admin)
-):
-    """
-    Ver contraseña de un usuario (ADMIN o OWNER según jerarquía)
-    - OWNER puede ver todas las contraseñas
-    - ADMIN solo puede ver contraseñas de usuarios (no admin ni owner)
-    """
-    try:
-        usuario = db.query(Usuario).filter(Usuario.id == usuario_id).first()
-        if not usuario:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Usuario no encontrado",
-            )
-        
-        # Permitir ver su propia contraseña
-        es_propio = usuario.id == usuario_actual.id
-        
-        # Jerarquía de roles: sysowner > owner > admin > user
-        rol_jerarquia = {"sysowner": 4, "owner": 3, "admin": 2, "user": 1}
-        mi_nivel = rol_jerarquia.get(usuario_actual.rol, 0)
-        su_nivel = rol_jerarquia.get(usuario.rol, 0)
-        
-        # Solo puede ver contraseñas de usuarios de menor rango (o la propia)
-        if not es_propio and su_nivel >= mi_nivel:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No puedes ver la contraseña de un usuario de igual o mayor rango",
-            )
-        
-        # Admin y Owner solo pueden ver contraseñas de usuarios de su mismo entorno (excepto la propia)
-        if not es_propio and usuario_actual.rol in ["admin", "owner"]:
-            if usuario.entorno_trabajo_id != usuario_actual.entorno_trabajo_id:
-                raise HTTPException(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    detail="Solo puedes ver contraseñas de usuarios de tu empresa",
-                )
-        
-        if not usuario.password_plain:
-            return {"password": "(no disponible - usuario antiguo)"}
-        
-        return {"password": usuario.password_plain}
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error viendo contraseña: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Error al obtener contraseña",
-        )
+# ============== VER CONTRASEÑA ==============
+# ELIMINADO POR SEGURIDAD: No se deben almacenar ni exponer contraseñas en texto plano.
+# Los admins pueden usar el endpoint PUT /usuarios/{id} para resetear contraseñas.
 
 
 # ============== GESTIÓN DE USUARIOS (OWNER/SYSOWNER) ==============
@@ -302,7 +250,6 @@ async def crear_usuario(
             email=request.email,
             nombre=request.nombre,
             password_hash=hash_password(request.password),
-            password_plain=request.password,  # Guardar contraseña en texto plano
             rol=rol_lower,
             entorno_trabajo_id=entorno_id
         )
@@ -441,7 +388,6 @@ async def actualizar_usuario(
         
         if password is not None and password.strip():
             usuario_db.password_hash = hash_password(password)
-            usuario_db.password_plain = password
         
         db.commit()
         db.refresh(usuario_db)
@@ -713,6 +659,8 @@ async def actualizar_modulos_entorno(
             entorno.modulo_inventario_piezas = modulos.modulo_inventario_piezas
         if modulos.modulo_estudio_coches is not None:
             entorno.modulo_estudio_coches = modulos.modulo_estudio_coches
+        if modulos.modulo_paqueteria is not None:
+            entorno.modulo_paqueteria = modulos.modulo_paqueteria
         
         db.commit()
         db.refresh(entorno)
@@ -784,7 +732,6 @@ async def crear_usuario_admin(
             email=request.email,
             nombre=request.nombre,
             password_hash=hash_password(request.password),
-            password_plain=request.password,  # Guardar contraseña en texto plano
             rol="user",
             entorno_trabajo_id=usuario_actual.entorno_trabajo_id
         )

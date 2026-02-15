@@ -1,22 +1,26 @@
 import axios, { AxiosInstance } from 'axios';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api/v1';
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
 
 const apiClient: AxiosInstance = axios.create({
-  baseURL: API_URL,
+  baseURL: `${API_URL}/api/v1`,
+  timeout: 30000,
   headers: {
     'Content-Type': 'application/json',
   },
-  withCredentials: true,  // Enviar cookies HTTPOnly automáticamente
+  withCredentials: true,
 });
 
-// Interceptor para manejar 401 (sin necesidad de agregar token manual)
+// Interceptor para manejar errores y redirección en 401
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
     if (error.response?.status === 401) {
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      localStorage.removeItem('token');
+      if (typeof window !== 'undefined' && !window.location.pathname.includes('/login')) {
+        window.location.href = '/login';
+      }
     }
     return Promise.reject(error);
   }

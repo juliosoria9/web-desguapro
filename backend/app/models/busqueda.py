@@ -31,7 +31,6 @@ class Usuario(Base):
     email = Column(String(100), index=True)  # Campo de usuario - único por entorno (no globalmente)
     nombre = Column(String(100))  # Nombre para mostrar (opcional)
     password_hash = Column(String(255))
-    password_plain = Column(String(255), nullable=True)  # Contraseña en texto plano (para admin/owner)
     rol = Column(String(20), default="user")  # sysowner, owner, admin, user
     activo = Column(Boolean, default=True)
     entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id"), nullable=True)
@@ -64,6 +63,7 @@ class EntornoTrabajo(Base):
     modulo_importacion_csv = Column(Boolean, default=True)  # Importación automática de CSV
     modulo_inventario_piezas = Column(Boolean, default=True)  # Inventario de piezas (stock)
     modulo_estudio_coches = Column(Boolean, default=True)  # Estudio de coches
+    modulo_paqueteria = Column(Boolean, default=True)  # Gestión de paquetería y envíos
     
     # Relaciones
     usuarios = relationship("Usuario", back_populates="entorno_trabajo", foreign_keys="Usuario.entorno_trabajo_id")
@@ -541,3 +541,116 @@ class APIRequestLog(Base):
     # Relaciones
     usuario = relationship("Usuario")
     entorno_trabajo = relationship("EntornoTrabajo")
+
+
+# ============== ANUNCIOS / CHANGELOG ==============
+class Anuncio(Base):
+    """Modelo para anuncios y changelog del sistema"""
+    __tablename__ = "anuncios"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    
+    titulo = Column(String(255), nullable=False)
+    contenido = Column(String(5000), nullable=False)  # Contenido en markdown
+    version = Column(String(50), nullable=True)  # Versión del software (ej: "1.7.0")
+    tipo = Column(String(50), default="changelog")  # changelog, anuncio, mantenimiento
+    
+    activo = Column(Boolean, default=True)  # Si está activo se muestra
+    mostrar_popup = Column(Boolean, default=True)  # Si debe aparecer como popup al iniciar sesión
+    
+    creado_por_id = Column(Integer, ForeignKey("usuarios.id"))
+    fecha_creacion = Column(DateTime, default=now_spain_naive)
+    fecha_actualizacion = Column(DateTime, onupdate=now_spain_naive)
+    
+    # Relaciones
+    creado_por = relationship("Usuario")
+    lecturas = relationship("AnuncioLeido", back_populates="anuncio", cascade="all, delete-orphan")
+
+
+class AnuncioLeido(Base):
+    """Registro de anuncios leídos por usuario"""
+    __tablename__ = "anuncios_leidos"
+    __table_args__ = (
+        Index('ix_anuncio_leido_usuario_anuncio', 'usuario_id', 'anuncio_id', unique=True),
+    )
+    
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"))
+    anuncio_id = Column(Integer, ForeignKey("anuncios.id", ondelete="CASCADE"))
+    fecha_lectura = Column(DateTime, default=now_spain_naive)
+    
+    # Relaciones
+    usuario = relationship("Usuario")
+    anuncio = relationship("Anuncio", back_populates="lecturas")
+
+
+# ============== PAQUETERÍA ==============
+class RegistroPaquete(Base):
+    """Registro de empaquetado: cada fila = 1 pieza metida en 1 caja"""
+    __tablename__ = "registros_paquetes"
+    __table_args__ = (
+        Index('ix_regpaq_entorno_fecha', 'entorno_trabajo_id', 'fecha_registro'),
+        Index('ix_regpaq_usuario_fecha', 'usuario_id', 'fecha_registro'),
+        Index('ix_regpaq_id_caja', 'id_caja'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"))
+    entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id", ondelete="CASCADE"))
+
+    id_caja = Column(String(100), index=True)   # ID escaneado de la caja
+    id_pieza = Column(String(100), index=True)   # ID escaneado de la pieza
+
+    fecha_registro = Column(DateTime, default=now_spain_naive)
+
+    # Relaciones
+    usuario = relationship("Usuario")
+    entorno_trabajo = relationship("EntornoTrabajo")
+
+
+# ============== TIPOS DE CAJA ==============
+class TipoCaja(Base):
+    """Tabla para asociar referencias de caja a un tipo/categoría"""
+    __tablename__ = "tipos_caja"
+    __table_args__ = (
+        Index('ix_tipocaja_entorno', 'entorno_trabajo_id'),
+        Index('ix_tipocaja_ref_entorno', 'referencia_caja', 'entorno_trabajo_id', unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id", ondelete="CASCADE"))
+    referencia_caja = Column(String(100), nullable=False)   # La referencia/ID de la caja
+    tipo_nombre = Column(String(150), nullable=False)        # Nombre del tipo (ej: "Caja Grande", "Palet")
+    descripcion = Column(String(500), nullable=True)         # Descripción opcional
+    stock_actual = Column(Integer, default=0)                # Cajas disponibles ahora
+    dias_aviso = Column(Integer, nullable=True)              # Días restantes para avisar (null = sin aviso)
+    aviso_enviado = Column(Boolean, default=False)           # True si ya se envió aviso (se resetea con nueva entrada)
+    fecha_creacion = Column(DateTime, default=now_spain_naive)
+
+    # Relaciones
+    entorno_trabajo = relationship("EntornoTrabajo")
+    movimientos = relationship("MovimientoCaja", back_populates="tipo_caja", cascade="all, delete-orphan")
+
+
+class MovimientoCaja(Base):
+    """Registro de cada movimiento de stock de cajas (entrada, consumo, ajuste)"""
+    __tablename__ = "movimientos_caja"
+    __table_args__ = (
+        Index('ix_movcaja_tipo_fecha', 'tipo_caja_id', 'fecha'),
+        Index('ix_movcaja_entorno_fecha', 'entorno_trabajo_id', 'fecha'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tipo_caja_id = Column(Integer, ForeignKey("tipos_caja.id", ondelete="CASCADE"))
+    entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id", ondelete="CASCADE"))
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
+
+    cantidad = Column(Integer, nullable=False)      # Positivo = entrada, negativo = consumo
+    tipo_movimiento = Column(String(20), nullable=False)  # 'entrada', 'consumo', 'ajuste'
+    notas = Column(String(500), nullable=True)
+    fecha = Column(DateTime, default=now_spain_naive)
+
+    # Relaciones
+    tipo_caja = relationship("TipoCaja", back_populates="movimientos")
+    entorno_trabajo = relationship("EntornoTrabajo")
+    usuario = relationship("Usuario")

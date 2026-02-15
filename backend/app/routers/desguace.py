@@ -1169,6 +1169,112 @@ async def obtener_stock(
         )
 
 
+@router.get("/stock/buscar-pieza/{refid}")
+async def buscar_pieza_por_refid(
+    refid: str,
+    entorno_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_user)
+):
+    """
+    Buscar una pieza específica por refid.
+    Primero busca en stock, si no la encuentra busca en vendidas.
+    Útil para verificar fichadas antiguas.
+    """
+    try:
+        # Determinar entorno
+        if usuario_actual.rol == "sysowner" and entorno_id:
+            target_entorno_id = entorno_id
+        else:
+            target_entorno_id = usuario_actual.entorno_trabajo_id
+        
+        if not target_entorno_id:
+            return {"encontrada": False, "mensaje": "No hay entorno asignado"}
+        
+        refid_clean = refid.strip().upper()
+        
+        # 1. Buscar en stock actual
+        base = db.query(BaseDesguace).filter(
+            BaseDesguace.entorno_trabajo_id == target_entorno_id
+        ).first()
+        
+        if base:
+            pieza = db.query(PiezaDesguace).filter(
+                PiezaDesguace.base_desguace_id == base.id,
+                func.upper(PiezaDesguace.refid) == refid_clean
+            ).first()
+            
+            if pieza:
+                # Obtener info de usuario fichaje
+                usuario_fichaje = None
+                if pieza.usuario_fichaje_id:
+                    usuario = db.query(Usuario).filter(Usuario.id == pieza.usuario_fichaje_id).first()
+                    if usuario:
+                        usuario_fichaje = usuario.nombre or usuario.email
+                
+                return {
+                    "encontrada": True,
+                    "estado": "en_stock",
+                    "pieza": {
+                        "id": pieza.id,
+                        "refid": pieza.refid,
+                        "oem": pieza.oem,
+                        "oe": pieza.oe,
+                        "iam": pieza.iam,
+                        "precio": pieza.precio,
+                        "ubicacion": pieza.ubicacion,
+                        "observaciones": pieza.observaciones,
+                        "articulo": pieza.articulo,
+                        "marca": pieza.marca,
+                        "modelo": pieza.modelo,
+                        "version": pieza.version,
+                        "imagen": pieza.imagen,
+                        "fecha_creacion": pieza.fecha_creacion.isoformat() if pieza.fecha_creacion else None,
+                        "fecha_fichaje": pieza.fecha_fichaje.isoformat() if pieza.fecha_fichaje else None,
+                        "usuario_fichaje": usuario_fichaje,
+                    }
+                }
+        
+        # 2. Buscar en piezas vendidas
+        vendida = db.query(PiezaVendida).filter(
+            PiezaVendida.entorno_trabajo_id == target_entorno_id,
+            func.upper(PiezaVendida.refid) == refid_clean
+        ).order_by(PiezaVendida.fecha_venta.desc()).first()
+        
+        if vendida:
+            return {
+                "encontrada": True,
+                "estado": "vendida",
+                "pieza": {
+                    "id": vendida.id,
+                    "refid": vendida.refid,
+                    "oem": vendida.oem,
+                    "precio": vendida.precio,
+                    "articulo": vendida.articulo,
+                    "marca": vendida.marca,
+                    "modelo": vendida.modelo,
+                    "version": vendida.version,
+                    "imagen": vendida.imagen,
+                    "fecha_venta": vendida.fecha_venta.isoformat() if vendida.fecha_venta else None,
+                },
+                "mensaje": f"Pieza vendida el {vendida.fecha_venta.strftime('%d/%m/%Y') if vendida.fecha_venta else 'fecha desconocida'}"
+            }
+        
+        # 3. No encontrada en ningún lado
+        return {
+            "encontrada": False,
+            "estado": "no_encontrada",
+            "mensaje": "Pieza no encontrada en stock ni en historial de ventas"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error buscando pieza {refid}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Error al buscar pieza",
+        )
+
+
 @router.get("/stock/resumen")
 async def resumen_stock(
     entorno_id: Optional[int] = None,

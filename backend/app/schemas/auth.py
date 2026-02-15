@@ -78,6 +78,7 @@ class EntornoModulosUpdate(BaseModel):
     modulo_importacion_csv: Optional[bool] = None
     modulo_inventario_piezas: Optional[bool] = None
     modulo_estudio_coches: Optional[bool] = None
+    modulo_paqueteria: Optional[bool] = None
 
 
 class EntornoTrabajoResponse(BaseModel):
@@ -95,6 +96,9 @@ class EntornoTrabajoResponse(BaseModel):
     modulo_ventas: bool = True
     modulo_precios_sugeridos: bool = True
     modulo_importacion_csv: bool = True
+    modulo_inventario_piezas: bool = True
+    modulo_estudio_coches: bool = True
+    modulo_paqueteria: bool = True
     
     class Config:
         from_attributes = True

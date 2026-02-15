@@ -11,6 +11,7 @@ export interface Modulos {
   importacion_csv: boolean;
   inventario_piezas: boolean;
   estudio_coches: boolean;
+  paqueteria: boolean;
 }
 
 export interface User {
@@ -34,17 +35,18 @@ interface AuthStore {
   hasModulo: (modulo: keyof Modulos) => boolean;
 }
 
-// Módulos por defecto (todos activos)
+// Módulos por defecto (todos desactivados — se activan desde el backend por entorno)
 const defaultModulos: Modulos = {
-  fichadas: true,
-  stock_masivo: true,
-  referencias: true,
-  piezas_nuevas: true,
-  ventas: true,
-  precios_sugeridos: true,
-  importacion_csv: true,
-  inventario_piezas: true,
-  estudio_coches: true,
+  fichadas: false,
+  stock_masivo: false,
+  referencias: false,
+  piezas_nuevas: false,
+  ventas: false,
+  precios_sugeridos: false,
+  importacion_csv: false,
+  inventario_piezas: false,
+  estudio_coches: false,
+  paqueteria: false,
 };
 
 // Normaliza el rol a minúsculas

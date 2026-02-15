@@ -4,13 +4,13 @@ arreglado el bug que hacia que si fichabas mas de 100 piezas no aparecieran mas
 arreglado un bug que hacia que no saliera la informacion de rotacion en el apartado ventas
 arreglado un bug que hacia que el buscador de piezas con motos y en algunos caso no saliera precio
 Arreglado el bug que hacia que piezas que estaban marcadas con tick en fichaje con el tiempo pusiera una cruz
-
+arrelado un bug que piezas fichadas antes de la actualizacion no se podian ver en el apartadod de fichadas
+arreglado un bug que probocaba que algunos entornos de trabajo perdieran algunas funcionalidades
 ---------------------------Implementaciones ----------------------------
 ahora se guarda en la base de datos quien ha fichado cada pieza
 mejorada la optimización de las busquedas en la base de datos
 ahora se puede buscar piezas en inventario por nombre de la persona que la fichado
 añadido piezas minimas en control de precios esto hace que al hacer la comparacion si no hay como minimo esa cantidad de piezas en venta no lo toma en cuenta y no hace la media
 Agregado un sistema de tickets de soporte para poder mandar reportes idea o dudas para todos los usuarios 
-
---------------------------Trabajo en proceso----------------------------
-Trabajando en un sistema de cruce de referencias de OEM
+Sistema de logs para el control de errores y uso de la web previene de un uso ineadecuado del programa y protege a las empresas que lo usan
+Añadido un sistema de anuncios para informar a los usuarios de novedades, mantenimientos o cualquier información relevante

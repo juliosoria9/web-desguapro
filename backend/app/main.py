@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 import logging
 
 from app.config import settings
-from app.routers import precios, stock, plataformas, token, auth, desguace, precios_config, referencias, fichadas, ebay, admin, piezas, stockeo, tickets
+from app.routers import precios, stock, plataformas, token, auth, desguace, precios_config, referencias, fichadas, ebay, admin, piezas, stockeo, tickets, anuncios, paqueteria
 from services.scheduler import iniciar_scheduler, detener_scheduler
 from app.middleware.request_logger import RequestLoggerMiddleware
 
@@ -73,6 +73,12 @@ app.include_router(stockeo.router, prefix="/api/v1", tags=["stockeo"])
 
 # Tickets de soporte
 app.include_router(tickets.router, prefix="/api/v1/tickets", tags=["tickets"])
+
+# Anuncios y changelog
+app.include_router(anuncios.router, prefix="/api/v1/anuncios", tags=["anuncios"])
+
+# Paquetería y envíos
+app.include_router(paqueteria.router, prefix="/api/v1/paqueteria", tags=["paquetería"])
 
 # eBay API (sin autenticación - público para que eBay pueda verificar)
 app.include_router(ebay.router, prefix="/api/v1", tags=["ebay"])

@@ -21,6 +21,7 @@ interface EntornoTrabajo {
   modulo_importacion_csv: boolean;
   modulo_inventario_piezas: boolean;
   modulo_estudio_coches: boolean;
+  modulo_paqueteria: boolean;
 }
 
 interface ModuloConfig {
@@ -39,6 +40,7 @@ const MODULOS_DISPONIBLES: ModuloConfig[] = [
   { key: 'modulo_importacion_csv', label: 'Importación CSV', descripcion: 'Importación automática de stock' },
   { key: 'modulo_inventario_piezas', label: 'Inventario Piezas', descripcion: 'Gestión de inventario de piezas (stock)' },
   { key: 'modulo_estudio_coches', label: 'Estudio Coches', descripcion: 'Análisis y estudio de vehículos' },
+  { key: 'modulo_paqueteria', label: 'Gestión Paquetería', descripcion: 'Control de envíos y paquetes' },
 ];
 
 export default function EnvironmentsAdminPage() {

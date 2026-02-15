@@ -601,11 +601,11 @@ async def obtener_api_stats(
     ]
     
     # Peticiones por hora (últimas N horas)
-    from sqlalchemy import extract
+    from sqlalchemy import extract, case
     horas_stats = db.query(
         func.strftime('%Y-%m-%d %H:00', APIRequestLog.fecha).label('hora'),
         func.count(APIRequestLog.id).label('total'),
-        func.sum(func.case((APIRequestLog.status_code >= 400, 1), else_=0)).label('errores')
+        func.sum(case((APIRequestLog.status_code >= 400, 1), else_=0)).label('errores')
     ).filter(APIRequestLog.fecha >= hace_n_horas)
     if base_filter:
         horas_stats = horas_stats.filter(*base_filter)

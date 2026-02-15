@@ -37,7 +37,11 @@ interface PiezaStock {
   modelo: string | null;
   version: string | null;
   imagen: string | null;
+  fecha_venta?: string | null;  // Si está vendida
 }
+
+// Estado de la pieza: en_stock, vendida, no_encontrada
+type EstadoPieza = 'en_stock' | 'vendida' | 'no_encontrada';
 
 interface MiFichada {
   id: number;
@@ -132,6 +136,8 @@ function FichadasContent() {
 
   // Estado para modal de detalle de pieza
   const [piezaDetalle, setPiezaDetalle] = useState<PiezaStock | null>(null);
+  const [estadoPieza, setEstadoPieza] = useState<EstadoPieza | null>(null);
+  const [mensajePieza, setMensajePieza] = useState<string | null>(null);
   const [cargandoPieza, setCargandoPieza] = useState(false);
 
   const esAdmin = user?.rol && ['admin', 'owner', 'sysowner'].includes(user.rol);
@@ -409,29 +415,31 @@ function FichadasContent() {
   // Función para buscar pieza en stock por refid
   const buscarPiezaEnStock = async (idPieza: string) => {
     setCargandoPieza(true);
+    setEstadoPieza(null);
+    setMensajePieza(null);
     try {
-      // Para sysowner, incluir el entorno seleccionado para buscar en la base correcta
-      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/stock?busqueda=${encodeURIComponent(idPieza)}&limit=10`;
+      // Usar el nuevo endpoint que busca también en vendidas
+      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/desguace/stock/buscar-pieza/${encodeURIComponent(idPieza)}`;
       if (esSysowner && selectedEmpresa) {
-        url += `&entorno_id=${selectedEmpresa}`;
+        url += `?entorno_id=${selectedEmpresa}`;
       }
       
       const response = await axios.get(url, { withCredentials: true });
       
-      if (response.data.piezas && response.data.piezas.length > 0) {
-        // Buscar coincidencia exacta por refid (prioridad) o por OEM
-        const piezaExacta = response.data.piezas.find(
-          (p: PiezaStock) => p.refid === idPieza
-        ) || response.data.piezas.find(
-          (p: PiezaStock) => p.oem === idPieza
-        );
-        if (piezaExacta) {
-          setPiezaDetalle(piezaExacta);
-        } else {
-          setPiezaDetalle(response.data.piezas[0]);
+      if (response.data.encontrada) {
+        setPiezaDetalle(response.data.pieza);
+        setEstadoPieza(response.data.estado);
+        if (response.data.mensaje) {
+          setMensajePieza(response.data.mensaje);
+        }
+        if (response.data.estado === 'vendida') {
+          toast.success(`Pieza vendida: ${response.data.mensaje}`, { duration: 4000 });
         }
       } else {
-        toast.error('Pieza no encontrada en stock');
+        setPiezaDetalle(null);
+        setEstadoPieza('no_encontrada');
+        setMensajePieza(response.data.mensaje || 'Pieza no encontrada');
+        toast.error('Pieza no encontrada en stock ni en historial');
       }
     } catch (error: any) {
       console.error('Error buscando pieza:', error);
@@ -1087,24 +1095,32 @@ function FichadasContent() {
 
       {/* Modal de detalle de pieza */}
       {piezaDetalle && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => setPiezaDetalle(null)}>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={() => { setPiezaDetalle(null); setEstadoPieza(null); setMensajePieza(null); }}>
           <div className="bg-white rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
             {/* Header del modal */}
-            <div className="bg-gradient-to-r from-blue-600 to-blue-700 rounded-t-2xl">
+            <div className={`rounded-t-2xl ${estadoPieza === 'vendida' ? 'bg-gradient-to-r from-orange-500 to-orange-600' : 'bg-gradient-to-r from-blue-600 to-blue-700'}`}>
               <div className="px-6 py-4 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className="w-10 h-10 bg-white/20 rounded-xl flex items-center justify-center">
-                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-white">
-                      <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-                    </svg>
+                    {estadoPieza === 'vendida' ? (
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-white">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18.75a60.07 60.07 0 0 1 15.797 2.101c.727.198 1.453-.342 1.453-1.096V18.75M3.75 4.5v.75A.75.75 0 0 1 3 6h-.75m0 0v-.375c0-.621.504-1.125 1.125-1.125H20.25M2.25 6v9m18-10.5v.75c0 .414.336.75.75.75h.75m-1.5-1.5h.375c.621 0 1.125.504 1.125 1.125v9.75c0 .621-.504 1.125-1.125 1.125h-.375m1.5-1.5H21a.75.75 0 0 0-.75.75v.75m0 0H3.75m0 0h-.375a1.125 1.125 0 0 1-1.125-1.125V15m1.5 1.5v-.75A.75.75 0 0 0 3 15h-.75M15 10.5a3 3 0 1 1-6 0 3 3 0 0 1 6 0Zm3 0h.008v.008H18V10.5Zm-12 0h.008v.008H6V10.5Z" />
+                      </svg>
+                    ) : (
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-white">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                      </svg>
+                    )}
                   </div>
                   <div>
                     <h3 className="text-lg font-bold text-white">Detalle de Pieza</h3>
-                    <p className="text-blue-100 text-sm">En stock</p>
+                    <p className={`text-sm ${estadoPieza === 'vendida' ? 'text-orange-100' : 'text-blue-100'}`}>
+                      {estadoPieza === 'vendida' ? '💰 VENDIDA' : 'En stock'}
+                    </p>
                   </div>
                 </div>
                 <button
-                  onClick={() => setPiezaDetalle(null)}
+                  onClick={() => { setPiezaDetalle(null); setEstadoPieza(null); setMensajePieza(null); }}
                   className="w-8 h-8 bg-white/20 hover:bg-white/30 rounded-full flex items-center justify-center text-white transition-colors"
                 >
                   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-5 h-5">
@@ -1112,6 +1128,17 @@ function FichadasContent() {
                   </svg>
                 </button>
               </div>
+              {/* Banner de vendida */}
+              {estadoPieza === 'vendida' && mensajePieza && (
+                <div className="px-6 pb-4">
+                  <div className="bg-orange-700/50 rounded-lg px-4 py-2 text-white text-sm flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m9-.75a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9 3.75h.008v.008H12v-.008Z" />
+                    </svg>
+                    <span>{mensajePieza}</span>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Contenido del modal */}

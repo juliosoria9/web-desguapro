@@ -3,16 +3,42 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
 import { useAuthStore } from '@/lib/auth-store';
+import ChangelogModal from '@/components/ChangelogModal';
+import axios from 'axios';
 
 export default function DashboardPage() {
   const router = useRouter();
   const { user, logout, loadFromStorage, hasModulo } = useAuthStore();
   const [mounted, setMounted] = useState(false);
+  const [alertasCajas, setAlertasCajas] = useState(0);
 
   useEffect(() => {
     loadFromStorage();
     setMounted(true);
   }, [loadFromStorage]);
+
+  // Cargar alertas de stock de cajas para admins con módulo paquetería
+  useEffect(() => {
+    if (!mounted || !user) return;
+    const esAdmin = user.rol && ['admin', 'owner', 'sysowner'].includes(user.rol);
+    if (!esAdmin || !hasModulo('paqueteria')) return;
+
+    const cargarAlertas = async () => {
+      try {
+        const res = await axios.get(
+          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/tipos-caja/resumen`,
+          { withCredentials: true }
+        );
+        const alertas = (res.data || []).filter((r: any) =>
+          r.dias_aviso != null && r.dias_restantes != null && r.dias_restantes <= r.dias_aviso
+        );
+        setAlertasCajas(alertas.length);
+      } catch {
+        // silenciar errores
+      }
+    };
+    cargarAlertas();
+  }, [mounted, user]);
 
   const handleLogout = async () => {
     await logout();
@@ -393,6 +419,46 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {/* Card 8: Gestión Paquetería (Todos los usuarios) - verificar módulo */}
+          {hasModulo('paqueteria') && (
+            <div
+              className={`relative rounded-2xl shadow-md p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer group ${
+                alertasCajas > 0
+                  ? 'bg-gradient-to-br from-red-50 to-orange-50 border-2 border-red-300 ring-2 ring-red-100'
+                  : 'bg-white border border-gray-100'
+              }`}
+              onClick={() => router.push('/paqueteria')}
+            >
+              {/* Badge de alerta */}
+              {alertasCajas > 0 && (
+                <div className="absolute -top-2 -right-2 flex items-center gap-1 bg-red-500 text-white text-xs font-bold px-2.5 py-1 rounded-full shadow-lg animate-pulse">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3.5 h-3.5">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126ZM12 15.75h.007v.008H12v-.008Z" />
+                  </svg>
+                  {alertasCajas}
+                </div>
+              )}
+              <div className={`w-12 h-12 mb-3 p-2.5 rounded-xl transition-colors ${
+                alertasCajas > 0
+                  ? 'bg-red-100 text-red-600 group-hover:bg-red-200'
+                  : 'bg-amber-50 text-amber-600 group-hover:bg-amber-100'
+              }`}>
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
+                </svg>
+              </div>
+              <h2 className={`text-xl font-bold mb-2 ${alertasCajas > 0 ? 'text-red-800' : 'text-gray-900'}`}>
+                Gestión Paquetería
+              </h2>
+              <p className={alertasCajas > 0 ? 'text-red-600 font-medium' : 'text-gray-600'}>
+                {alertasCajas > 0
+                  ? `${alertasCajas} caja${alertasCajas > 1 ? 's' : ''} en riesgo de agotarse`
+                  : 'Control de envíos y paquetes'
+                }
+              </p>
+            </div>
+          )}
+
           {/* Card: Tickets de Soporte (Todos los usuarios) */}
           <div
             className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer border border-gray-100 group"
@@ -410,6 +476,26 @@ export default function DashboardPage() {
               {user.rol === 'sysowner' ? 'Ver todos los tickets' : 'Dudas, sugerencias y reportes'}
             </p>
           </div>
+
+          {/* Card: Gestión de Anuncios (Solo SYSOWNER) */}
+          {user.rol === 'sysowner' && (
+            <div
+              className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer border border-gray-100 group"
+              onClick={() => router.push('/admin/anuncios')}
+            >
+              <div className="w-12 h-12 mb-3 p-2.5 rounded-xl bg-violet-50 text-violet-600 group-hover:bg-violet-100 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M10.34 15.84c-.688-.06-1.386-.09-2.09-.09H7.5a4.5 4.5 0 1 1 0-9h.75c.704 0 1.402-.03 2.09-.09m0 9.18c.253.962.584 1.892.985 2.783.247.55.06 1.21-.463 1.511l-.657.38c-.551.318-1.26.117-1.527-.461a20.845 20.845 0 0 1-1.44-4.282m3.102.069a18.03 18.03 0 0 1-.59-4.59c0-1.586.205-3.124.59-4.59m0 9.18a23.848 23.848 0 0 1 8.835 2.535M10.34 6.66a23.847 23.847 0 0 0 8.835-2.535m0 0A23.74 23.74 0 0 0 18.795 3m.38 1.125a23.91 23.91 0 0 1 1.014 5.395m-1.014 8.855c-.118.38-.245.754-.38 1.125m.38-1.125a23.91 23.91 0 0 0 1.014-5.395m0-3.46c.495.413.811 1.035.811 1.73 0 .695-.316 1.317-.811 1.73m0-3.46a24.347 24.347 0 0 1 0 3.46" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">
+                Anuncios
+              </h2>
+              <p className="text-gray-600">
+                Changelog y avisos a usuarios
+              </p>
+            </div>
+          )}
         </div>
 
         {/* Info section - Solo visible para sysowner */}
@@ -439,7 +525,9 @@ export default function DashboardPage() {
           </div>
         )}
       </main>
+
+      {/* Modal de Changelog - se muestra automáticamente si hay anuncios no leídos */}
+      <ChangelogModal />
     </div>
   );
 }
-
