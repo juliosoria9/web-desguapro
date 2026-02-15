@@ -83,8 +83,11 @@ async def login(request: LoginRequest, req: Request, db: Session = Depends(get_d
                 detail={"message": "Selecciona una empresa", "empresas": empresas}
             )
         
-        # Log de login exitoso
-        AuditService.log_login(db, usuario, client_ip, user_agent, exitoso=True)
+        # Log de login exitoso (no debe bloquear el login si falla)
+        try:
+            AuditService.log_login(db, usuario, client_ip, user_agent, exitoso=True)
+        except Exception as e:
+            logger.warning(f"No se pudo registrar audit log de login: {e}")
         
         # Obtener nombre del entorno para incluir en el token
         entorno_nombre = None

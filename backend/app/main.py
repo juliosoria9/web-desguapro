@@ -11,6 +11,8 @@ from app.config import settings
 from app.routers import precios, stock, plataformas, token, auth, desguace, precios_config, referencias, fichadas, ebay, admin, piezas, stockeo, tickets, anuncios, paqueteria
 from services.scheduler import iniciar_scheduler, detener_scheduler
 from app.middleware.request_logger import RequestLoggerMiddleware
+from app.database import engine
+from app.models.busqueda import Base
 
 # Configurar logging
 logging.basicConfig(level=settings.log_level)
@@ -20,6 +22,9 @@ logger = logging.getLogger(__name__)
 # Lifecycle: iniciar/detener scheduler
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Startup: crear tablas nuevas si no existen
+    logger.info("Verificando tablas de base de datos...")
+    Base.metadata.create_all(bind=engine)
     # Startup: iniciar scheduler de backups
     logger.info("Iniciando scheduler de backups automáticos...")
     iniciar_scheduler()
