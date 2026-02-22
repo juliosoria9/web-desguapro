@@ -85,7 +85,7 @@ class FlamarScraper:
                     price = precio_text
 
             results.append({
-                "source": "Flamar Meridional",
+                "source": "Flamar",
                 "iam_ref": iam_ref,
                 "brand": brand,
                 "description": full_description,

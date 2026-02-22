@@ -31,6 +31,7 @@ class Usuario(Base):
     email = Column(String(100), index=True)  # Campo de usuario - único por entorno (no globalmente)
     nombre = Column(String(100))  # Nombre para mostrar (opcional)
     password_hash = Column(String(255))
+    password_plain = Column(String(255), nullable=True)  # Para que admins puedan ver contraseñas de subordinados
     rol = Column(String(20), default="user")  # sysowner, owner, admin, user
     activo = Column(Boolean, default=True)
     entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id"), nullable=True)
@@ -64,6 +65,7 @@ class EntornoTrabajo(Base):
     modulo_inventario_piezas = Column(Boolean, default=True)  # Inventario de piezas (stock)
     modulo_estudio_coches = Column(Boolean, default=True)  # Estudio de coches
     modulo_paqueteria = Column(Boolean, default=True)  # Gestión de paquetería y envíos
+    modulo_oem_equivalentes = Column(Boolean, default=True)  # OEM equivalentes (eBay)
     
     # Relaciones
     usuarios = relationship("Usuario", back_populates="entorno_trabajo", foreign_keys="Usuario.entorno_trabajo_id")
@@ -585,27 +587,53 @@ class AnuncioLeido(Base):
 
 
 # ============== PAQUETERÍA ==============
+
+class SucursalPaqueteria(Base):
+    """Sucursal/puesto de paquetería dentro de un entorno de trabajo"""
+    __tablename__ = "sucursales_paqueteria"
+    __table_args__ = (
+        Index('ix_sucpaq_entorno', 'entorno_trabajo_id'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id", ondelete="CASCADE"))
+    nombre = Column(String(100), nullable=False)
+    color_hex = Column(String(7), default="#3B82F6")  # Color para identificar visualmente
+    es_legacy = Column(Boolean, default=False)  # True = sucursal de migración (oculta al selector)
+    activa = Column(Boolean, default=True)
+    fecha_creacion = Column(DateTime, default=now_spain_naive)
+
+    # Relaciones
+    entorno_trabajo = relationship("EntornoTrabajo")
+    registros = relationship("RegistroPaquete", back_populates="sucursal")
+    stock_cajas = relationship("StockCajaSucursal", back_populates="sucursal", cascade="all, delete-orphan")
+
+
 class RegistroPaquete(Base):
-    """Registro de empaquetado: cada fila = 1 pieza metida en 1 caja"""
+    """Registro de empaquetado: cada fila = 1 material/caja asociado a 1 pieza"""
     __tablename__ = "registros_paquetes"
     __table_args__ = (
         Index('ix_regpaq_entorno_fecha', 'entorno_trabajo_id', 'fecha_registro'),
         Index('ix_regpaq_usuario_fecha', 'usuario_id', 'fecha_registro'),
         Index('ix_regpaq_id_caja', 'id_caja'),
+        Index('ix_regpaq_grupo', 'grupo_paquete'),
     )
 
     id = Column(Integer, primary_key=True, index=True)
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"))
     entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id", ondelete="CASCADE"))
+    sucursal_paqueteria_id = Column(Integer, ForeignKey("sucursales_paqueteria.id", ondelete="SET NULL"), nullable=True)
 
-    id_caja = Column(String(100), index=True)   # ID escaneado de la caja
+    id_caja = Column(String(100), index=True)   # ID escaneado de la caja/material
     id_pieza = Column(String(100), index=True)   # ID escaneado de la pieza
+    grupo_paquete = Column(String(36), nullable=True, index=True)  # UUID para agrupar cajas de la misma pieza
 
     fecha_registro = Column(DateTime, default=now_spain_naive)
 
     # Relaciones
     usuario = relationship("Usuario")
     entorno_trabajo = relationship("EntornoTrabajo")
+    sucursal = relationship("SucursalPaqueteria", back_populates="registros")
 
 
 # ============== TIPOS DE CAJA ==============
@@ -644,6 +672,7 @@ class MovimientoCaja(Base):
     tipo_caja_id = Column(Integer, ForeignKey("tipos_caja.id", ondelete="CASCADE"))
     entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id", ondelete="CASCADE"))
     usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
+    sucursal_paqueteria_id = Column(Integer, ForeignKey("sucursales_paqueteria.id", ondelete="SET NULL"), nullable=True)
 
     cantidad = Column(Integer, nullable=False)      # Positivo = entrada, negativo = consumo
     tipo_movimiento = Column(String(20), nullable=False)  # 'entrada', 'consumo', 'ajuste'
@@ -654,3 +683,85 @@ class MovimientoCaja(Base):
     tipo_caja = relationship("TipoCaja", back_populates="movimientos")
     entorno_trabajo = relationship("EntornoTrabajo")
     usuario = relationship("Usuario")
+    sucursal = relationship("SucursalPaqueteria")
+
+
+class StockCajaSucursal(Base):
+    """Stock de un tipo de caja por sucursal"""
+    __tablename__ = "stock_caja_sucursal"
+    __table_args__ = (
+        Index('ix_stockcajasuc_tipo_suc', 'tipo_caja_id', 'sucursal_paqueteria_id', unique=True),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    tipo_caja_id = Column(Integer, ForeignKey("tipos_caja.id", ondelete="CASCADE"))
+    sucursal_paqueteria_id = Column(Integer, ForeignKey("sucursales_paqueteria.id", ondelete="CASCADE"))
+    stock_actual = Column(Integer, default=0)
+
+    # Relaciones
+    tipo_caja = relationship("TipoCaja")
+    sucursal = relationship("SucursalPaqueteria", back_populates="stock_cajas")
+
+
+# ============== CLIENTES INTERESADOS (Ventas) ==============
+class ClienteInteresado(Base):
+    """Cliente interesado en comprar una pieza"""
+    __tablename__ = "clientes_interesados"
+    __table_args__ = (
+        Index('ix_clienteint_entorno', 'entorno_trabajo_id'),
+        Index('ix_clienteint_estado', 'estado'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id", ondelete="CASCADE"))
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="SET NULL"), nullable=True)
+
+    nombre = Column(String(200), nullable=False)
+    email = Column(String(200), nullable=True)
+    telefono = Column(String(50), nullable=True)
+
+    pieza_buscada = Column(String(300), nullable=True)
+    marca_coche = Column(String(100), nullable=True)
+    modelo_coche = Column(String(100), nullable=True)
+    anio_coche = Column(String(10), nullable=True)
+    version_coche = Column(String(150), nullable=True)
+    observaciones = Column(String(1000), nullable=True)
+
+    estado = Column(String(20), default="pendiente")  # pendiente, contactado, vendido, descartado
+    fecha_registro = Column(DateTime, default=now_spain_naive)
+
+    # Relaciones
+    entorno_trabajo = relationship("EntornoTrabajo")
+    usuario = relationship("Usuario")
+
+
+# ============== VEHÍCULOS DE REFERENCIA ==============
+class VehiculoReferencia(Base):
+    """Catálogo de vehículos con datos de precios por estado"""
+    __tablename__ = "vehiculos_referencia"
+    __table_args__ = (
+        Index('ix_vehiculoref_marca', 'marca'),
+        Index('ix_vehiculoref_marca_modelo', 'marca', 'modelo'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    marca = Column(String(100), nullable=False)
+    modelo = Column(String(150), nullable=False)
+    anios_produccion = Column(String(50), nullable=True)
+    rango_anios = Column(String(20), nullable=True)
+    tiene_serie = Column(Boolean, default=False)
+    tiene_deportiva = Column(Boolean, default=False)
+    observaciones_facelift = Column(String(500), nullable=True)
+    serie_1g = Column(String(50), nullable=True)
+    serie_2g = Column(String(50), nullable=True)
+    serie_3g = Column(String(50), nullable=True)
+    precio_fatal_10 = Column(Float, nullable=True)
+    precio_mal_13 = Column(Float, nullable=True)
+    precio_regular_17 = Column(Float, nullable=True)
+    precio_bien_23 = Column(Float, nullable=True)
+    precio_vida_deportiva = Column(Float, nullable=True)
+    valor_minimo_usado = Column(Float, nullable=True)
+    porcentaje_15 = Column(Float, nullable=True)
+    porcentaje_20 = Column(Float, nullable=True)
+    porcentaje_23 = Column(Float, nullable=True)
+    compatibilidad = Column(String(500), nullable=True)

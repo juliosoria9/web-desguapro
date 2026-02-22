@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 import logging
 
 from app.config import settings
-from app.routers import precios, stock, plataformas, token, auth, desguace, precios_config, referencias, fichadas, ebay, admin, piezas, stockeo, tickets, anuncios, paqueteria
+from app.routers import precios, stock, plataformas, token, auth, desguace, precios_config, referencias, fichadas, ebay, admin, piezas, stockeo, tickets, anuncios, paqueteria, tests, clientes, vehiculos
 from services.scheduler import iniciar_scheduler, detener_scheduler
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.database import engine
@@ -84,6 +84,15 @@ app.include_router(anuncios.router, prefix="/api/v1/anuncios", tags=["anuncios"]
 
 # Paquetería y envíos
 app.include_router(paqueteria.router, prefix="/api/v1/paqueteria", tags=["paquetería"])
+
+# Clientes interesados (Ventas)
+app.include_router(clientes.router, prefix="/api/v1/clientes", tags=["clientes"])
+
+# Datos de vehículos (marcas, modelos, años)
+app.include_router(vehiculos.router, prefix="/api/v1/vehiculos", tags=["vehículos"])
+
+# Tests del sistema (solo sysowner)
+app.include_router(tests.router, prefix="/api/v1/tests", tags=["tests"])
 
 # eBay API (sin autenticación - público para que eBay pueda verificar)
 app.include_router(ebay.router, prefix="/api/v1", tags=["ebay"])

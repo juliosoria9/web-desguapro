@@ -79,7 +79,7 @@ class NtyScraper:
                         img_url = self.BASE_URL + "/" + src
 
             results.append({
-                "source": "NTY (distri-auto.es)",
+                "source": "NTY",
                 "iam_ref": iam_ref,
                 "brand": "NTY",
                 "description": description,

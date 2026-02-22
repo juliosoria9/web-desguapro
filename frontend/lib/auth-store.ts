@@ -12,6 +12,7 @@ export interface Modulos {
   inventario_piezas: boolean;
   estudio_coches: boolean;
   paqueteria: boolean;
+  oem_equivalentes: boolean;
 }
 
 export interface User {
@@ -47,6 +48,7 @@ const defaultModulos: Modulos = {
   inventario_piezas: false,
   estudio_coches: false,
   paqueteria: false,
+  oem_equivalentes: false,
 };
 
 // Normaliza el rol a minúsculas
@@ -84,7 +86,7 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     try {
       const token = localStorage.getItem('token');
       await axios.post(
-        `${process.env.NEXT_PUBLIC_API_URL}/auth/logout`,
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/logout`,
         {},
         { 
           withCredentials: true,
@@ -131,8 +133,8 @@ export const useAuthStore = create<AuthStore>((set, get) => ({
     const { user } = get();
     // sysowner siempre tiene acceso a todo
     if (user?.rol === 'sysowner') return true;
-    // Si no hay usuario o no hay módulos definidos, usar defaults (true)
-    if (!user?.modulos) return true;
-    return user.modulos[modulo] ?? true;
+    // Si no hay usuario o no hay módulos definidos, denegar por defecto
+    if (!user?.modulos) return false;
+    return user.modulos[modulo] ?? false;
   },
 }));

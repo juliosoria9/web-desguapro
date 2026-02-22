@@ -1,0 +1,273 @@
+## Agente: revisión de endpoints y funcionalidad (guía viva)
+Última actualización: 2026-02-17
+
+Este archivo es mi “chuleta” para, con **cada cambio** del proyecto, revisar:
+- Endpoints (que arrancan, responden, no devuelven 500 y mantienen contrato básico)
+- Funcionalidades clave (regresión de flujos importantes)
+
+Si añades/modificas endpoints o módulos, actualiza esta guía.
+
+---
+
+## Cómo revisar rápido (cada cambio)
+### 1) Smoke del backend
+- **API arriba**: `GET /api/v1/health` debe devolver `status: healthy`.
+- **Docs**: abrir `/docs` y comprobar que carga OpenAPI sin errores.
+- **Root**: `GET /` devuelve mensaje, docs y versión.
+
+### 2) Autenticación (modelo real del proyecto)
+- `POST /api/v1/auth/login` devuelve JSON con `access_token` y `usuario`, y además setea cookie **HTTPOnly** `access_token`.
+- El resto de endpoints “privados” dependen de esa cookie (o del token si el front lo envía).
+
+### 3) Checklist de regresión por módulos (resumen)
+Basado en `docs/cambios` (v1.6):
+- **Fichaje / fichadas**:
+  - Registrar fichadas y que no “desaparezcan” al superar volumen alto (caso +100).
+  - Piezas antiguas (previas a actualización) deben seguir siendo visibles.
+  - Guardar “quién fichó cada pieza” y poder buscar por ese dato en inventario.
+  - Estados “tick/cruz” no deben degradarse con el tiempo.
+- **Ventas**:
+  - En `ventas` y `ventas/resumen` debe aparecer info de rotación correctamente.
+  - Borrado de ventas funciona sin romper resúmenes.
+- **Buscadores**:
+  - Búsqueda de piezas (incluyendo “motos”) devuelve precio cuando corresponde.
+  - Optimización de búsquedas no debe romper resultados (mismas entradas → mismas salidas lógicas).
+- **Tickets soporte**:
+  - Crear ticket, enviar mensajes, listar “mis tickets”, y admin “todos”.
+- **Logs / auditoría**:
+  - Consultas de logs y stats responden y paginan.
+  - Stream de logs funciona (sin 500).
+- **Anuncios / changelog**:
+  - Usuario: no leídos, marcar leído, marcar todos.
+  - Sysowner: crear/editar/borrar y listar todos.
+
+---
+
+## Endpoints detectados (backend FastAPI)
+Nota: los paths se construyen con `main.py` y los `APIRouter(prefix=...)` de cada router.
+
+### Públicos (sin login)
+- `GET /` (root)
+- `GET /api/v1/health`
+- **Auth**:
+  - `POST /api/v1/auth/login`
+- **eBay (público para verificación)**:
+  - `GET /api/v1/ebay/account-deletion` (challenge)
+  - `POST /api/v1/ebay/account-deletion` (notificación)
+
+### Requieren sesión/token (cookie `access_token`)
+#### Auth / Usuarios / Entornos
+Base: `/api/v1/auth`
+- `POST /logout`
+- `GET /me`
+- `POST /usuarios`
+- `GET /usuarios`
+- `PUT /usuarios/{usuario_id}`
+- `PUT /usuarios/{usuario_id}/rol`
+- `DELETE /usuarios/{usuario_id}`
+- `POST /usuarios/{usuario_id}/entorno/{entorno_id}`
+- `GET /usuarios/{usuario_id}/informe`
+- Sysowner:
+  - `POST /entornos`
+  - `GET /entornos`
+  - `DELETE /entornos/{entorno_id}`
+  - `PUT /entornos/{entorno_id}/modulos`
+- Admin (admin listing/creation):
+  - `GET /usuarios-admin`
+  - `POST /usuarios-admin`
+
+#### Precios
+Base: `/api/v1/precios`
+- `POST /buscar`
+- `GET /plataformas-disponibles`
+
+#### Stock
+Base: `/api/v1/stock`
+- `POST /verificar`
+- `POST /verificar-masivo`
+
+#### Plataformas
+Base: `/api/v1/plataformas`
+- `GET /`
+- `GET /{platform_id}`
+
+#### Token (TOEN ecooparts) (admin/owner)
+Base: `/api/v1/token`
+- `GET /obtener`
+- `POST /configurar`
+
+#### Desguace (base, inventario, ventas, estudio coches)
+Base: `/api/v1/desguace`
+- `GET /campos`
+- `POST /analizar` (subida CSV)
+- `POST /upload` (subida base desguace)
+- `GET /info`
+- `DELETE /eliminar`
+- `GET /buscar`
+- Ventas:
+  - `GET /ventas`
+  - `GET /ventas/resumen`
+  - `DELETE /ventas/{venta_id}`
+- Stock:
+  - `GET /stock`
+  - `GET /stock/buscar-pieza/{refid}`
+  - `GET /stock/resumen`
+- Estudio coches:
+  - `GET /estudio-coches`
+  - `GET /estudio-coches/marcas`
+  - `GET /estudio-coches/modelos`
+  - `GET /estudio-coches/versiones`
+  - `GET /estudio-coches/piezas`
+  - `POST /estudio-coches/buscar-precios`
+
+#### Configuración de precios
+Base: `/api/v1/precios-config`
+- `GET /entornos`
+- `GET /estado`
+- Subidas:
+  - `POST /pieza-familia`
+  - `POST /familia-precios`
+- Listados:
+  - `GET /piezas-familia`
+  - `GET /familias-precios`
+- Limpieza:
+  - `DELETE /eliminar`
+- CRUD “nuevo”:
+  - `POST /pieza-familia/nuevo`
+  - `PUT /pieza-familia/{id}`
+  - `DELETE /pieza-familia/{id}`
+  - `POST /familia-precios/nuevo`
+  - `PUT /familia-precios/{id}`
+  - `DELETE /familia-precios/{id}`
+- Exportación:
+  - `GET /exportar/pieza-familia`
+  - `GET /exportar/familia-precios`
+
+#### Referencias (OEM/IAM)
+Base: `/api/v1/referencias`
+- `POST /buscar`
+- `POST /rapidas`
+
+#### Fichadas
+Base: `/api/v1/fichadas`
+- `GET /resumen-equipo`
+- `POST /registrar`
+- `GET /resumen-dia`
+- `GET /detalle-usuario/{usuario_id}`
+- `GET /mis-fichadas`
+- `DELETE /borrar/{fichada_id}`
+- `PATCH /descripcion/{fichada_id}`
+- `PATCH /comentario/{fichada_id}`
+- `GET /verificaciones/{usuario_id}`
+- `GET /informe-rendimiento/{usuario_id}`
+- `GET /semanas-disponibles/{usuario_id}`
+- `GET /detalle-semana/{usuario_id}`
+
+#### Piezas / CSV / Pedidas
+Base: `/api/v1/piezas`
+- `POST /nuevas`
+- `GET /recientes`
+- `DELETE /{pieza_id}`
+- CSV (verificación/guardado):
+  - `POST /verificar-csv`
+  - `POST /verificar-guardado/{csv_id}`
+  - `GET /csv-guardados`
+  - `GET /csv-guardados/{csv_id}`
+  - `GET /csv-guardados/{csv_id}/contenido`
+  - `PUT /csv-guardados/{csv_id}`
+  - `DELETE /csv-guardados/{csv_id}`
+- Pedidas:
+  - `POST /pedidas`
+  - `GET /pedidas`
+  - `DELETE /pedidas/{referencia}`
+
+#### Tickets
+Base: `/api/v1/tickets`
+- `POST /crear`
+- `POST /{ticket_id}/mensaje`
+- `GET /mis-tickets`
+- `GET /todos`
+- `GET /{ticket_id}`
+- `PUT /{ticket_id}/estado`
+- `DELETE /{ticket_id}`
+- `GET /estadisticas/resumen`
+
+#### Anuncios / Changelog
+Base: `/api/v1/anuncios`
+- Sysowner/admin:
+  - `POST /crear`
+  - `PUT /{anuncio_id}`
+  - `DELETE /{anuncio_id}`
+  - `GET /admin/todos`
+- Usuario:
+  - `GET /no-leidos`
+  - `GET /changelog`
+  - `POST /{anuncio_id}/marcar-leido`
+  - `POST /marcar-todos-leidos`
+
+#### Paquetería
+Base: `/api/v1/paqueteria`
+- `POST /registrar`
+- `GET /ranking`
+- `GET /mis-registros`
+- `GET /detalle-usuario/{usuario_id}` (admin)
+- `GET /todos-registros` (admin)
+- `DELETE /borrar/{registro_id}`
+- `PUT /editar/{registro_id}`
+- Tipos caja:
+  - `GET /tipos-caja`
+  - `POST /tipos-caja`
+  - `PUT /tipos-caja/{tipo_id}`
+  - `DELETE /tipos-caja/{tipo_id}`
+  - `POST /tipos-caja/{tipo_id}/movimiento`
+  - `GET /tipos-caja/{tipo_id}/movimientos`
+  - `GET /tipos-caja/resumen`
+  - `PUT /tipos-caja/{tipo_id}/stock`
+- `GET /estadisticas`
+
+#### Admin / Auditoría / Backups / API logs
+Base: `/api/v1/admin`
+- Auditoría:
+  - `GET /audit-logs`
+  - `GET /audit-logs/acciones`
+- Backups:
+  - `GET /backups`
+  - `POST /backups/crear`
+  - `POST /backups/restaurar/{backup_id}`
+  - `GET /backups/estadisticas`
+- Scheduler:
+  - `GET /scheduler/estado`
+  - `POST /scheduler/forzar-backup`
+- Jobs manuales:
+  - `POST /importar-csv-motocoche`
+  - `POST /limpiar-ventas-falsas`
+- API logs:
+  - `GET /api-logs`
+  - `GET /api-stats`
+  - `GET /api-logs/stream`
+  - `GET /api-logs/entornos`
+  - `DELETE /api-logs/limpiar`
+
+#### Stockeo automático (solo sysowner)
+Base: `/api/v1/stockeo`
+- `GET /campos-disponibles`
+- `GET /configuraciones`
+- `GET /configuracion/{entorno_id}`
+- `POST /configuracion`
+- `PUT /configuracion/{entorno_id}`
+- `DELETE /configuracion/{entorno_id}`
+- `POST /leer-csv-headers`
+- `POST /ejecutar-ahora/{entorno_id}`
+
+---
+
+## Comandos útiles (PowerShell) para pruebas rápidas
+### Health
+- `Invoke-RestMethod http://localhost:8000/api/v1/health`
+
+### Login (guardar cookies en sesión)
+- `Invoke-RestMethod -Method Post -Uri http://localhost:8000/api/v1/auth/login -ContentType "application/json" -Body '{"email":"TU_EMAIL","password":"TU_PASS"}' -SessionVariable sess`
+
+### Llamar endpoint autenticado usando la cookie
+- `Invoke-RestMethod -WebSession $sess -Uri http://localhost:8000/api/v1/auth/me`
+

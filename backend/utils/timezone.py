@@ -2,34 +2,34 @@
 Utilidades para manejo de zona horaria de España
 """
 from datetime import datetime, timezone, timedelta
+from zoneinfo import ZoneInfo
 
-# Offset de España (CET = UTC+1, CEST = UTC+2)
-# Usamos UTC+1 como base (horario de invierno)
-# Para verano habría que ajustar a UTC+2
-SPAIN_OFFSET = timedelta(hours=1)
+# Zona horaria de España (maneja CET/CEST automáticamente)
+SPAIN_TZ = ZoneInfo("Europe/Madrid")
+
+# Mantener para compatibilidad con código que importe SPAIN_OFFSET
+SPAIN_OFFSET = timedelta(hours=1)  # DEPRECATED: usar SPAIN_TZ
 
 
 def now_spain() -> datetime:
     """Obtener la hora actual en España (con timezone)"""
-    utc_now = datetime.now(timezone.utc)
-    return utc_now + SPAIN_OFFSET
+    return datetime.now(SPAIN_TZ)
 
 
 def now_spain_naive() -> datetime:
     """Obtener la hora actual en España (sin timezone, para SQLite)"""
-    utc_now = datetime.utcnow()
-    spain_time = utc_now + SPAIN_OFFSET
-    return spain_time
+    return datetime.now(SPAIN_TZ).replace(tzinfo=None)
 
 
 def to_spain(dt: datetime) -> datetime:
-    """Convertir un datetime UTC a hora de España"""
+    """Convertir un datetime a hora de España (devuelve naive para compatibilidad SQLite)"""
     if dt is None:
         return None
     if dt.tzinfo is None:
         # Asumir que es UTC si no tiene timezone
-        return dt + SPAIN_OFFSET
-    return dt.astimezone(timezone.utc) + SPAIN_OFFSET
+        dt = dt.replace(tzinfo=timezone.utc)
+    spain_dt = dt.astimezone(SPAIN_TZ)
+    return spain_dt.replace(tzinfo=None)
 
 
 def format_spain_time(dt: datetime, fmt: str = "%H:%M") -> str:

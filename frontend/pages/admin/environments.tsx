@@ -22,6 +22,7 @@ interface EntornoTrabajo {
   modulo_inventario_piezas: boolean;
   modulo_estudio_coches: boolean;
   modulo_paqueteria: boolean;
+  modulo_oem_equivalentes: boolean;
 }
 
 interface ModuloConfig {
@@ -41,6 +42,7 @@ const MODULOS_DISPONIBLES: ModuloConfig[] = [
   { key: 'modulo_inventario_piezas', label: 'Inventario Piezas', descripcion: 'Gestión de inventario de piezas (stock)' },
   { key: 'modulo_estudio_coches', label: 'Estudio Coches', descripcion: 'Análisis y estudio de vehículos' },
   { key: 'modulo_paqueteria', label: 'Gestión Paquetería', descripcion: 'Control de envíos y paquetes' },
+  { key: 'modulo_oem_equivalentes', label: 'OEM Equivalentes', descripcion: 'Búsqueda OEM equivalentes (eBay)' },
 ];
 
 export default function EnvironmentsAdminPage() {

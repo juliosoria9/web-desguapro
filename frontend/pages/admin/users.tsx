@@ -414,18 +414,18 @@ export default function UsersAdminPage() {
     if (!editingUser) return;
     
     try {
-      const params = new URLSearchParams();
+      const body: Record<string, string> = {};
       // Enviar el nuevo nombre de usuario si cambió
       if (editUsuario.trim() && editUsuario.trim() !== editingUser.email) {
-        params.append('usuario', editUsuario.trim());
+        body.usuario = editUsuario.trim();
       }
-      if (editPassword.trim()) params.append('password', editPassword.trim());
+      if (editPassword.trim()) body.password = editPassword.trim();
       
       // Solo hacer la petición si hay algo que cambiar
-      if (params.toString()) {
+      if (Object.keys(body).length > 0) {
         await axios.put(
-          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios/${editingUser.id}?${params.toString()}`,
-          {},
+          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/auth/usuarios/${editingUser.id}`,
+          body,
           { withCredentials: true }
         );
         toast.success('Usuario actualizado');

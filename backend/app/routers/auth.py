@@ -2,6 +2,7 @@
 Router para autenticación y gestión de usuarios
 """
 from typing import Optional
+from pydantic import BaseModel
 from fastapi import APIRouter, HTTPException, Depends, status, Query, Response, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
@@ -120,6 +121,7 @@ async def login(request: LoginRequest, req: Request, db: Session = Depends(get_d
                     "inventario_piezas": entorno.modulo_inventario_piezas if hasattr(entorno, 'modulo_inventario_piezas') and entorno.modulo_inventario_piezas is not None else True,
                     "estudio_coches": entorno.modulo_estudio_coches if hasattr(entorno, 'modulo_estudio_coches') and entorno.modulo_estudio_coches is not None else True,
                     "paqueteria": entorno.modulo_paqueteria if hasattr(entorno, 'modulo_paqueteria') and entorno.modulo_paqueteria is not None else True,
+                    "oem_equivalentes": entorno.modulo_oem_equivalentes if hasattr(entorno, 'modulo_oem_equivalentes') and entorno.modulo_oem_equivalentes is not None else True,
                 }
         
         # Crear response con entorno_nombre y módulos
@@ -195,8 +197,34 @@ async def obtener_usuario_actual(
 
 
 # ============== VER CONTRASEÑA ==============
-# ELIMINADO POR SEGURIDAD: No se deben almacenar ni exponer contraseñas en texto plano.
-# Los admins pueden usar el endpoint PUT /usuarios/{id} para resetear contraseñas.
+@router.get("/usuarios/{usuario_id}/password")
+async def ver_password_usuario(
+    usuario_id: int,
+    db: Session = Depends(get_db),
+    usuario_actual: Usuario = Depends(get_current_admin)
+):
+    """Ver contraseña de un usuario de menor rango"""
+    usuario_db = db.query(Usuario).filter(Usuario.id == usuario_id).first()
+    if not usuario_db:
+        raise HTTPException(status_code=404, detail="Usuario no encontrado")
+
+    rol_jerarquia = {"sysowner": 4, "owner": 3, "admin": 2, "user": 1}
+    mi_nivel = rol_jerarquia.get(usuario_actual.rol, 0)
+    su_nivel = rol_jerarquia.get(usuario_db.rol, 0)
+    es_propio = usuario_db.id == usuario_actual.id
+
+    if not es_propio and su_nivel >= mi_nivel:
+        raise HTTPException(status_code=403, detail="No puedes ver la contraseña de un usuario de igual o mayor rango")
+
+    # Admin/owner solo pueden ver usuarios de su mismo entorno
+    if not es_propio and usuario_actual.rol in ["admin", "owner"]:
+        if usuario_db.entorno_trabajo_id != usuario_actual.entorno_trabajo_id:
+            raise HTTPException(status_code=403, detail="Solo puedes ver contraseñas de usuarios de tu empresa")
+
+    if not usuario_db.password_plain:
+        raise HTTPException(status_code=404, detail="Contraseña no disponible (establecida antes de activar esta función)")
+
+    return {"password": usuario_db.password_plain}
 
 
 # ============== GESTIÓN DE USUARIOS (OWNER/SYSOWNER) ==============
@@ -253,6 +281,7 @@ async def crear_usuario(
             email=request.email,
             nombre=request.nombre,
             password_hash=hash_password(request.password),
+            password_plain=request.password,
             rol=rol_lower,
             entorno_trabajo_id=entorno_id
         )
@@ -335,16 +364,24 @@ async def eliminar_usuario(
         )
 
 
+class ActualizarUsuarioBody(BaseModel):
+    usuario: str = None
+    password: str = None
+
 @router.put("/usuarios/{usuario_id}")
 async def actualizar_usuario(
     usuario_id: int,
-    usuario: str = None,
-    password: str = None,
+    body: ActualizarUsuarioBody = None,
     db: Session = Depends(get_db),
     usuario_actual: Usuario = Depends(get_current_admin)
 ):
     """Actualizar usuario y/o contraseña de un usuario (ADMIN o OWNER según jerarquía, o el propio usuario)"""
     try:
+        if body is None:
+            body = ActualizarUsuarioBody()
+        usuario = body.usuario
+        password = body.password
+
         usuario_db = db.query(Usuario).filter(Usuario.id == usuario_id).first()
         if not usuario_db:
             raise HTTPException(
@@ -425,15 +462,35 @@ async def cambiar_rol_usuario(
                 detail="Usuario no encontrado",
             )
         
-        # Validar rol (ahora usamos strings directamente)
-        roles_validos = ["user", "admin", "owner", "sysowner"]
+        # Validar rol - owner NO puede asignar sysowner
+        rol_jerarquia = {"sysowner": 4, "owner": 3, "admin": 2, "user": 1}
+        roles_validos = ["user", "admin", "owner"]
+        if usuario_actual.rol == "sysowner":
+            roles_validos.append("sysowner")
         
         rol_lower = nuevo_rol.lower()
         if rol_lower not in roles_validos:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Rol inválido. Use: user, admin, owner, sysowner",
+                detail=f"Rol inválido. Use: {', '.join(roles_validos)}",
             )
+        
+        # No puede asignar un rol igual o superior al suyo (excepto sysowner)
+        mi_nivel = rol_jerarquia.get(usuario_actual.rol, 0)
+        nuevo_nivel = rol_jerarquia.get(rol_lower, 0)
+        if nuevo_nivel >= mi_nivel and usuario_actual.rol != "sysowner":
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No puedes asignar un rol igual o superior al tuyo",
+            )
+        
+        # Owner/admin solo puede cambiar roles dentro de su entorno
+        if usuario_actual.rol in ["admin", "owner"]:
+            if usuario.entorno_trabajo_id != usuario_actual.entorno_trabajo_id:
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail="Solo puedes cambiar roles de usuarios de tu empresa",
+                )
         
         usuario.rol = rol_lower
         db.commit()
@@ -664,6 +721,8 @@ async def actualizar_modulos_entorno(
             entorno.modulo_estudio_coches = modulos.modulo_estudio_coches
         if modulos.modulo_paqueteria is not None:
             entorno.modulo_paqueteria = modulos.modulo_paqueteria
+        if modulos.modulo_oem_equivalentes is not None:
+            entorno.modulo_oem_equivalentes = modulos.modulo_oem_equivalentes
         
         db.commit()
         db.refresh(entorno)

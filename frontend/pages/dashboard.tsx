@@ -1,4 +1,4 @@
-﻿'use client';
+'use client';
 
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/router';
@@ -379,7 +379,27 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          {/* Card 6: Historial de Ventas - verificar módulo */}
+          {/* Card: Venta - módulo comercial */}
+          {hasModulo('ventas') && (
+            <div
+              className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer border border-gray-100 group"
+              onClick={() => router.push('/venta')}
+            >
+              <div className="w-12 h-12 mb-3 p-2.5 rounded-xl bg-emerald-50 text-emerald-600 group-hover:bg-emerald-100 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 10.5V6a3.75 3.75 0 1 0-7.5 0v4.5m11.356-1.993 1.263 12c.07.665-.45 1.243-1.119 1.243H4.25a1.125 1.125 0 0 1-1.12-1.243l1.264-12A1.125 1.125 0 0 1 5.513 7.5h12.974c.576 0 1.059.435 1.119 1.007ZM8.625 10.5a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm7.5 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">
+                Venta
+              </h2>
+              <p className="text-gray-600">
+                Clientes interesados y buscar piezas
+              </p>
+            </div>
+          )}
+
+          {/* Card: Historial de Ventas - verificar módulo */}
           {hasModulo('ventas') && (
             <div
               className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer border border-gray-100 group"
@@ -459,6 +479,24 @@ export default function DashboardPage() {
             </div>
           )}
 
+          {/* Card: Catálogo Vehículos (Todos los usuarios) */}
+          <div
+            className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer border border-gray-100 group"
+            onClick={() => router.push('/admin/vehiculos')}
+          >
+            <div className="w-12 h-12 mb-3 p-2.5 rounded-xl bg-cyan-50 text-cyan-600 group-hover:bg-cyan-100 transition-colors">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
+              </svg>
+            </div>
+            <h2 className="text-xl font-bold text-gray-900 mb-2">
+              Catálogo Vehículos
+            </h2>
+            <p className="text-gray-600">
+              Marcas, modelos, años y precios
+            </p>
+          </div>
+
           {/* Card: Tickets de Soporte (Todos los usuarios) */}
           <div
             className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer border border-gray-100 group"
@@ -493,6 +531,26 @@ export default function DashboardPage() {
               </h2>
               <p className="text-gray-600">
                 Changelog y avisos a usuarios
+              </p>
+            </div>
+          )}
+
+          {/* Card: Tests del Sistema (Solo SYSOWNER) */}
+          {user.rol === 'sysowner' && (
+            <div
+              className="bg-gradient-to-br from-blue-50 to-indigo-50 rounded-2xl shadow-md p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer border-2 border-blue-200 group"
+              onClick={() => router.push('/admin/tests')}
+            >
+              <div className="w-12 h-12 mb-3 p-2.5 rounded-xl bg-blue-100 text-blue-700 group-hover:bg-blue-200 transition-colors">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75 11.25 15 15 9.75m6 2.25a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                </svg>
+              </div>
+              <h2 className="text-xl font-bold text-gray-900 mb-2">
+                Tests del Sistema
+              </h2>
+              <p className="text-gray-600">
+                Probar endpoints y estado del backend
               </p>
             </div>
           )}

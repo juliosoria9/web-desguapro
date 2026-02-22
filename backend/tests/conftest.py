@@ -20,7 +20,13 @@ from app.main import app
 from app.models.busqueda import (
     Usuario, EntornoTrabajo, Busqueda, 
     FichadaPieza, VerificacionFichada,
-    BaseDesguace, PiezaDesguace
+    BaseDesguace, PiezaDesguace, PiezaVendida,
+    Ticket, TicketMensaje,
+    Anuncio, AnuncioLeido,
+    SucursalPaqueteria, RegistroPaquete, TipoCaja, MovimientoCaja,
+    ConfiguracionPrecios, PiezaFamiliaDesguace, FamiliaPreciosDesguace,
+    ConfiguracionStockeo, CSVGuardado, PiezaPedida,
+    AuditLog, BackupRecord, APIRequestLog,
 )
 from utils.security import hash_password, create_access_token
 
@@ -226,3 +232,174 @@ def piezas_desguace(db_session, base_desguace_ejemplo) -> list:
         db_session.refresh(p)
     
     return piezas
+
+
+# ============== FIXTURES SYSOWNER / OWNER ==============
+@pytest.fixture
+def usuario_sysowner(db_session, entorno_trabajo) -> Usuario:
+    """Fixture para crear un usuario sysowner de prueba"""
+    usuario = Usuario(
+        email="sysowner@test.com",
+        nombre="SysOwner Test",
+        password_hash=hash_password("test123"),
+        rol="sysowner",
+        activo=True,
+        entorno_trabajo_id=entorno_trabajo.id,
+    )
+    db_session.add(usuario)
+    db_session.commit()
+    db_session.refresh(usuario)
+    return usuario
+
+
+@pytest.fixture
+def usuario_owner(db_session, entorno_trabajo) -> Usuario:
+    """Fixture para crear un usuario owner de prueba"""
+    usuario = Usuario(
+        email="owner@test.com",
+        nombre="Owner Test",
+        password_hash=hash_password("test123"),
+        rol="owner",
+        activo=True,
+        entorno_trabajo_id=entorno_trabajo.id,
+    )
+    db_session.add(usuario)
+    db_session.commit()
+    db_session.refresh(usuario)
+    return usuario
+
+
+@pytest.fixture
+def token_sysowner(usuario_sysowner) -> str:
+    """Token de sysowner válido"""
+    return create_access_token({
+        "usuario_id": usuario_sysowner.id,
+        "email": usuario_sysowner.email,
+        "rol": usuario_sysowner.rol,
+        "entorno_trabajo_id": usuario_sysowner.entorno_trabajo_id,
+    })
+
+
+@pytest.fixture
+def token_owner(usuario_owner) -> str:
+    """Token de owner válido"""
+    return create_access_token({
+        "usuario_id": usuario_owner.id,
+        "email": usuario_owner.email,
+        "rol": usuario_owner.rol,
+        "entorno_trabajo_id": usuario_owner.entorno_trabajo_id,
+    })
+
+
+@pytest.fixture
+def auth_headers_sysowner(token_sysowner) -> dict:
+    """Headers de sysowner"""
+    return {"Authorization": f"Bearer {token_sysowner}"}
+
+
+@pytest.fixture
+def auth_headers_owner(token_owner) -> dict:
+    """Headers de owner"""
+    return {"Authorization": f"Bearer {token_owner}"}
+
+
+# ============== FIXTURES DE TICKETS ==============
+@pytest.fixture
+def ticket_ejemplo(db_session, usuario_normal, entorno_trabajo) -> Ticket:
+    """Fixture para crear un ticket de ejemplo"""
+    ticket = Ticket(
+        usuario_id=usuario_normal.id,
+        entorno_trabajo_id=entorno_trabajo.id,
+        tipo="error",
+        asunto="Error de prueba",
+        descripcion="Descripción del error de prueba",
+        estado="abierto",
+        prioridad="normal",
+    )
+    db_session.add(ticket)
+    db_session.commit()
+    db_session.refresh(ticket)
+    return ticket
+
+
+# ============== FIXTURES DE ANUNCIOS ==============
+@pytest.fixture
+def anuncio_ejemplo(db_session, usuario_sysowner) -> Anuncio:
+    """Fixture para crear un anuncio de ejemplo"""
+    anuncio = Anuncio(
+        titulo="Anuncio de prueba",
+        contenido="Contenido del anuncio de prueba",
+        version="1.0.0",
+        tipo="changelog",
+        activo=True,
+        mostrar_popup=True,
+        creado_por_id=usuario_sysowner.id,
+    )
+    db_session.add(anuncio)
+    db_session.commit()
+    db_session.refresh(anuncio)
+    return anuncio
+
+
+# ============== FIXTURES DE PAQUETERÍA ==============
+@pytest.fixture
+def sucursal_ejemplo(db_session, entorno_trabajo) -> SucursalPaqueteria:
+    """Fixture para crear una sucursal de paquetería"""
+    sucursal = SucursalPaqueteria(
+        entorno_trabajo_id=entorno_trabajo.id,
+        nombre="Sucursal Test",
+        color_hex="#3B82F6",
+        activa=True,
+    )
+    db_session.add(sucursal)
+    db_session.commit()
+    db_session.refresh(sucursal)
+    return sucursal
+
+
+@pytest.fixture
+def tipo_caja_ejemplo(db_session, entorno_trabajo) -> TipoCaja:
+    """Fixture para crear un tipo de caja"""
+    tipo = TipoCaja(
+        entorno_trabajo_id=entorno_trabajo.id,
+        referencia_caja="CAJA-001",
+        tipo_nombre="Caja Grande",
+        descripcion="Caja grande para piezas",
+        stock_actual=10,
+    )
+    db_session.add(tipo)
+    db_session.commit()
+    db_session.refresh(tipo)
+    return tipo
+
+
+# ============== FIXTURES DE PRECIOS CONFIG ==============
+@pytest.fixture
+def config_precios_ejemplo(db_session, entorno_trabajo, usuario_admin) -> ConfiguracionPrecios:
+    """Fixture para crear configuración de precios"""
+    config = ConfiguracionPrecios(
+        entorno_trabajo_id=entorno_trabajo.id,
+        subido_por_id=usuario_admin.id,
+    )
+    db_session.add(config)
+    db_session.commit()
+    db_session.refresh(config)
+    return config
+
+
+# ============== FIXTURES DE VENTAS ==============
+@pytest.fixture
+def pieza_vendida_ejemplo(db_session, entorno_trabajo) -> PiezaVendida:
+    """Fixture para crear una pieza vendida de ejemplo"""
+    vendida = PiezaVendida(
+        entorno_trabajo_id=entorno_trabajo.id,
+        refid="VEND-001",
+        oem="OEM-VEND-001",
+        precio=250.0,
+        articulo="Motor de arranque",
+        archivo_origen="test.csv",
+    )
+    db_session.add(vendida)
+    db_session.commit()
+    db_session.refresh(vendida)
+    return vendida

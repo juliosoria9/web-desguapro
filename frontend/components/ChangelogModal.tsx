@@ -139,24 +139,34 @@ export default function ChangelogModal({ onClose, showButton = true }: Changelog
   };
 
   const sanitizeHtml = (html: string): string => {
-    // Eliminar tags peligrosos y su contenido
-    let clean = html
-      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
-      .replace(/<iframe[^>]*>[\s\S]*?<\/iframe>/gi, '')
-      .replace(/<object[^>]*>[\s\S]*?<\/object>/gi, '')
-      .replace(/<embed[^>]*>/gi, '')
-      .replace(/<form[^>]*>[\s\S]*?<\/form>/gi, '')
-      .replace(/<input[^>]*>/gi, '')
-      .replace(/<textarea[^>]*>[\s\S]*?<\/textarea>/gi, '')
-      .replace(/<link[^>]*>/gi, '')
-      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '');
-    // Eliminar event handlers (on*="...")
-    clean = clean.replace(/\s+on\w+\s*=\s*(["'])[^"']*\1/gi, '');
-    clean = clean.replace(/\s+on\w+\s*=\s*[^\s>]*/gi, '');
-    // Eliminar href/src con javascript:
-    clean = clean.replace(/href\s*=\s*(["'])\s*javascript:[^"']*\1/gi, 'href=$1#$1');
-    clean = clean.replace(/src\s*=\s*(["'])\s*javascript:[^"']*\1/gi, 'src=$1$1');
-    return clean;
+    const ALLOWED_TAGS = new Set([
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'br', 'hr',
+      'ul', 'ol', 'li', 'strong', 'em', 'code', 'pre', 'blockquote',
+      'span', 'div', 'a', 'img',
+    ]);
+    const ALLOWED_ATTRS = new Set(['class', 'href', 'src', 'alt', 'title']);
+
+    return html.replace(/<\/?([a-zA-Z][a-zA-Z0-9]*)\b([^>]*)?\/?>/g, (match, tag, attrs) => {
+      const tagLower = tag.toLowerCase();
+      if (!ALLOWED_TAGS.has(tagLower)) return '';
+
+      if (!attrs || !attrs.trim()) return match.replace(tag, tagLower);
+
+      const safeAttrs = (attrs.match(/\s+([a-zA-Z-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')/g) || [])
+        .filter((attr: string) => {
+          const name = attr.trim().split(/\s*=/)[0].trim().toLowerCase();
+          if (!ALLOWED_ATTRS.has(name)) return false;
+          const val = attr.replace(/^[^=]+=\s*["']?/, '').replace(/["']$/, '').trim().toLowerCase();
+          if ((name === 'href' || name === 'src') && val.startsWith('javascript')) return false;
+          return true;
+        })
+        .join('');
+
+      const isClosing = match.startsWith('</');
+      const isSelfClosing = match.endsWith('/>');
+      if (isClosing) return `</${tagLower}>`;
+      return `<${tagLower}${safeAttrs}${isSelfClosing ? ' /' : ''}>`;
+    });
   };
 
   const formatMarkdown = (text: string) => {

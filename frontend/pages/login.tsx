@@ -27,7 +27,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      console.log('Intentando login con:', username);
+      // Login attempt
       const response = await axios.post(`${API_URL}/api/v1/auth/login`, {
         email: username,
         password,
@@ -36,7 +36,7 @@ export default function LoginPage() {
         withCredentials: true,
       });
 
-      console.log('Respuesta del servidor:', response.data);
+      // Login response received
       const { usuario, access_token } = response.data;
 
       setAuth(usuario, access_token);

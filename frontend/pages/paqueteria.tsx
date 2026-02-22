@@ -106,6 +106,18 @@ const FireIcon = ({ className = "w-5 h-5" }: { className?: string }) => (
   </svg>
 );
 
+const ChevronDownIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={className}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+  </svg>
+);
+
+const ChevronRightIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={className}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+  </svg>
+);
+
 // ============== TIPOS ==============
 interface RegistroPaquete {
   id: number;
@@ -114,6 +126,9 @@ interface RegistroPaquete {
   fecha_registro: string;
   usuario_email: string;
   usuario_nombre: string | null;
+  sucursal_id?: number | null;
+  sucursal_nombre?: string | null;
+  grupo_paquete?: string | null;
 }
 
 interface RankingUsuario {
@@ -121,6 +136,7 @@ interface RankingUsuario {
   usuario_email: string;
   usuario_nombre: string | null;
   total_registros: number;
+  total_paquetes: number;
   primera: string | null;
   ultima: string | null;
 }
@@ -129,6 +145,7 @@ interface RankingResponse {
   fecha: string;
   usuarios: RankingUsuario[];
   total_general: number;
+  total_paquetes: number;
 }
 
 interface TipoCaja {
@@ -141,6 +158,13 @@ interface TipoCaja {
   dias_aviso: number | null;
   aviso_enviado: boolean;
   fecha_creacion: string;
+}
+
+interface StockSucursalInfo {
+  sucursal_id: number;
+  sucursal_nombre: string;
+  color_hex: string;
+  stock_actual: number;
 }
 
 interface ResumenTipoCaja {
@@ -156,6 +180,7 @@ interface ResumenTipoCaja {
   dias_restantes: number | null;
   dias_aviso: number | null;
   alerta_stock: boolean;
+  stock_por_sucursal: StockSucursalInfo[];
 }
 
 interface MovimientoCaja {
@@ -165,6 +190,8 @@ interface MovimientoCaja {
   tipo_movimiento: string;
   notas: string | null;
   usuario_email: string | null;
+  sucursal_id: number | null;
+  sucursal_nombre: string | null;
   fecha: string;
 }
 
@@ -201,6 +228,25 @@ interface EstadisticasResponse {
   ultimos_dias: EstadisticasDia[];
   usuarios: EstadisticasUsuario[];
   cajas_top: EstadisticasCaja[];
+  por_sucursal?: EstadisticasSucursal[];
+}
+
+interface SucursalPaqueteria {
+  id: number;
+  entorno_trabajo_id: number;
+  nombre: string;
+  color_hex: string;
+  es_legacy: boolean;
+  activa: boolean;
+  fecha_creacion: string;
+}
+
+interface EstadisticasSucursal {
+  sucursal_id: number;
+  sucursal_nombre: string;
+  color_hex: string;
+  total_hoy: number;
+  total_mes: number;
 }
 
 // ============== COMPONENTE PRINCIPAL ==============
@@ -217,6 +263,18 @@ function PaqueteriaContent() {
   const [idCaja, setIdCaja] = useState('');
   const [idPieza, setIdPieza] = useState('');
   const [registrando, setRegistrando] = useState(false);
+  const [cajasAsociadas, setCajasAsociadas] = useState(0);
+  const [piezaActiva, setPiezaActiva] = useState(false);
+  const [grupoPaqueteActual, setGrupoPaqueteActual] = useState('');
+  const [gruposExpandidos, setGruposExpandidos] = useState<Set<string>>(new Set());
+
+  const toggleGrupo = (key: string) => {
+    setGruposExpandidos(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
 
   // Selector empresa (sysowner)
   const [empresas, setEmpresas] = useState<{ id: number; nombre: string }[]>([]);
@@ -248,6 +306,19 @@ function PaqueteriaContent() {
 
   // Pestaña activa
   const [tabActiva, setTabActiva] = useState<'registros' | 'tipos' | 'inventario' | 'estadisticas'>('registros');
+
+  // Sucursales
+  const [sucursales, setSucursales] = useState<SucursalPaqueteria[]>([]);
+  const [sucursalSeleccionada, setSucursalSeleccionada] = useState<number | null>(null); // null = General
+  const [mostrarModalSucursal, setMostrarModalSucursal] = useState(false);
+  const [sucursalCargada, setSucursalCargada] = useState(false);
+  const [creandoSucursal, setCreandoSucursal] = useState(false);
+  const [nuevaSucursalNombre, setNuevaSucursalNombre] = useState('');
+  const [nuevaSucursalColor, setNuevaSucursalColor] = useState('#3B82F6');
+  const [editandoSucursalId, setEditandoSucursalId] = useState<number | null>(null);
+  const [editSucursalNombre, setEditSucursalNombre] = useState('');
+  const [editSucursalColor, setEditSucursalColor] = useState('#3B82F6');
+  const [borrandoSucursal, setBorrandoSucursal] = useState<number | null>(null);
 
   // Estadísticas
   const [estadisticas, setEstadisticas] = useState<EstadisticasResponse | null>(null);
@@ -283,6 +354,8 @@ function PaqueteriaContent() {
 
   const esAdmin = user?.rol && ['admin', 'owner', 'sysowner'].includes(user.rol);
   const esSysowner = user?.rol === 'sysowner';
+  const esVistaGeneral = sucursalSeleccionada === null;
+  const sucursalActual = sucursales.find(s => s.id === sucursalSeleccionada);
 
   useEffect(() => {
     loadFromStorage();
@@ -296,9 +369,46 @@ function PaqueteriaContent() {
     }
   }, [mounted, user]);
 
-  // Cargar datos al cambiar fecha/empresa
+  // Cargar sucursales al montar
   useEffect(() => {
     if (mounted && user) {
+      cargarSucursales();
+    }
+  }, [mounted, user, selectedEmpresa]);
+
+  // Mostrar modal al cargar sucursales (solo si hay más de una y no se eligió aún)
+  useEffect(() => {
+    if (sucursalCargada && sucursales.length > 0 && sucursalSeleccionada === null) {
+      // Recuperar de localStorage
+      const saved = localStorage.getItem('paqueteria_sucursal');
+      if (saved === 'general') {
+        setSucursalSeleccionada(null);
+      } else if (saved) {
+        const savedId = parseInt(saved);
+        if (sucursales.some(s => s.id === savedId)) {
+          setSucursalSeleccionada(savedId);
+        } else {
+          setMostrarModalSucursal(true);
+        }
+      } else {
+        // Primer acceso: si hay sucursales, mostrar modal
+        if (sucursales.length > 1) {
+          setMostrarModalSucursal(true);
+        } else if (sucursales.length === 1) {
+          // Solo una sucursal: seleccionar automáticamente
+          setSucursalSeleccionada(sucursales[0].id);
+          localStorage.setItem('paqueteria_sucursal', String(sucursales[0].id));
+        }
+      }
+    } else if (sucursalCargada && sucursales.length === 0) {
+      // No hay sucursales, vista general
+      setSucursalSeleccionada(null);
+    }
+  }, [sucursalCargada]);
+
+  // Cargar datos al cambiar fecha/empresa/sucursal
+  useEffect(() => {
+    if (mounted && user && sucursalCargada) {
       cargarRanking();
       if (!esAdmin) {
         cargarMisRegistros();
@@ -307,7 +417,7 @@ function PaqueteriaContent() {
         cargarTodosRegistros();
       }
     }
-  }, [mounted, fechaFiltro, user, selectedEmpresa]);
+  }, [mounted, fechaFiltro, user, selectedEmpresa, sucursalSeleccionada, sucursalCargada]);
 
   // Focus automático en caja al montar
   useEffect(() => {
@@ -328,20 +438,130 @@ function PaqueteriaContent() {
     if (mounted && user && tabActiva === 'inventario') {
       cargarResumenCajas();
     }
-  }, [mounted, tabActiva, user, selectedEmpresa]);
+  }, [mounted, tabActiva, user, selectedEmpresa, sucursalSeleccionada]);
 
   // Cargar estadísticas cuando se activa la pestaña
   useEffect(() => {
     if (mounted && user && tabActiva === 'estadisticas') {
       cargarEstadisticas();
     }
-  }, [mounted, tabActiva, user, selectedEmpresa]);
+  }, [mounted, tabActiva, user, selectedEmpresa, sucursalSeleccionada]);
+
+  const cargarSucursales = async () => {
+    try {
+      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/sucursales`;
+      if (esSysowner && selectedEmpresa) url += `?entorno_id=${selectedEmpresa}`;
+      const res = await axios.get<SucursalPaqueteria[]>(url, { withCredentials: true });
+      setSucursales(res.data);
+    } catch (err) {
+      console.error('Error cargando sucursales:', err);
+      setSucursales([]);
+    } finally {
+      setSucursalCargada(true);
+    }
+  };
+
+  const seleccionarSucursal = (id: number | null) => {
+    setSucursalSeleccionada(id);
+    localStorage.setItem('paqueteria_sucursal', id === null ? 'general' : String(id));
+    setMostrarModalSucursal(false);
+  };
+
+  const crearSucursal = async () => {
+    if (!nuevaSucursalNombre.trim()) {
+      toast.error('El nombre es obligatorio');
+      return;
+    }
+    setCreandoSucursal(true);
+    try {
+      const payload: any = {
+        nombre: nuevaSucursalNombre.trim(),
+        color_hex: nuevaSucursalColor,
+      };
+      if (esSysowner && selectedEmpresa) payload.entorno_id = selectedEmpresa;
+      await axios.post(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/sucursales`,
+        payload,
+        { withCredentials: true }
+      );
+      toast.success('Sucursal creada');
+      setNuevaSucursalNombre('');
+      setNuevaSucursalColor('#3B82F6');
+      await cargarSucursales();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Error al crear sucursal');
+    } finally {
+      setCreandoSucursal(false);
+    }
+  };
+
+  const iniciarEdicionSucursal = (suc: SucursalPaqueteria) => {
+    setEditandoSucursalId(suc.id);
+    setEditSucursalNombre(suc.nombre);
+    setEditSucursalColor(suc.color_hex);
+  };
+
+  const cancelarEdicionSucursal = () => {
+    setEditandoSucursalId(null);
+    setEditSucursalNombre('');
+    setEditSucursalColor('#3B82F6');
+  };
+
+  const guardarEdicionSucursal = async (sucId: number) => {
+    if (!editSucursalNombre.trim()) {
+      toast.error('El nombre es obligatorio');
+      return;
+    }
+    try {
+      await axios.put(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/sucursales/${sucId}`,
+        { nombre: editSucursalNombre.trim(), color_hex: editSucursalColor },
+        { withCredentials: true }
+      );
+      toast.success('Sucursal actualizada');
+      cancelarEdicionSucursal();
+      await cargarSucursales();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Error al editar sucursal');
+    }
+  };
+
+  const borrarSucursal = async (sucId: number) => {
+    if (!confirm('¿Borrar esta sucursal? Solo se puede si no tiene registros.')) return;
+    setBorrandoSucursal(sucId);
+    try {
+      await axios.delete(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/sucursales/${sucId}`,
+        { withCredentials: true }
+      );
+      toast.success('Sucursal eliminada');
+      if (sucursalSeleccionada === sucId) {
+        setSucursalSeleccionada(null);
+        localStorage.setItem('paqueteria_sucursal', 'general');
+      }
+      await cargarSucursales();
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Error al borrar sucursal');
+    } finally {
+      setBorrandoSucursal(null);
+    }
+  };
+
+  // Helper para añadir sucursal_id a las URLs
+  const addSucursalParam = (url: string) => {
+    if (sucursalSeleccionada !== null) {
+      const sep = url.includes('?') ? '&' : '?';
+      return `${url}${sep}sucursal_id=${sucursalSeleccionada}`;
+    }
+    return url;
+  };
 
   const cargarEstadisticas = async () => {
     setCargandoEstadisticas(true);
     try {
       let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/estadisticas`;
       if (esSysowner && selectedEmpresa) url += `?entorno_id=${selectedEmpresa}`;
+      url = addSucursalParam(url);
       const res = await axios.get<EstadisticasResponse>(url, { withCredentials: true });
       setEstadisticas(res.data);
     } catch (err) {
@@ -365,6 +585,7 @@ function PaqueteriaContent() {
     try {
       let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/ranking?fecha=${fechaFiltro}`;
       if (esSysowner && selectedEmpresa) url += `&entorno_id=${selectedEmpresa}`;
+      url = addSucursalParam(url);
       const res = await axios.get<RankingResponse>(url, { withCredentials: true });
       setRanking(res.data);
     } catch (err) {
@@ -377,10 +598,9 @@ function PaqueteriaContent() {
   const cargarMisRegistros = async () => {
     setCargandoMisRegistros(true);
     try {
-      const res = await axios.get<RegistroPaquete[]>(
-        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/mis-registros?fecha=${fechaFiltro}&limite=500`,
-        { withCredentials: true }
-      );
+      let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/mis-registros?fecha=${fechaFiltro}&limite=500`;
+      url = addSucursalParam(url);
+      const res = await axios.get<RegistroPaquete[]>(url, { withCredentials: true });
       setMisRegistros(res.data);
     } catch (err) {
       console.error('Error cargando mis registros:', err);
@@ -408,6 +628,7 @@ function PaqueteriaContent() {
     try {
       let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/todos-registros?fecha=${fechaFiltro}`;
       if (esSysowner && selectedEmpresa) url += `&entorno_id=${selectedEmpresa}`;
+      url = addSucursalParam(url);
       const res = await axios.get<RegistroPaquete[]>(url, { withCredentials: true });
       setTodosRegistros(res.data);
     } catch (err) {
@@ -428,6 +649,7 @@ function PaqueteriaContent() {
     try {
       let url = `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/detalle-usuario/${usuarioId}?fecha=${fechaFiltro}`;
       if (esSysowner && selectedEmpresa) url += `&entorno_id=${selectedEmpresa}`;
+      url = addSucursalParam(url);
       const res = await axios.get<RegistroPaquete[]>(url, { withCredentials: true });
       setDetalleRegistros(res.data);
     } catch (err) {
@@ -439,19 +661,42 @@ function PaqueteriaContent() {
   };
 
   // ============== REGISTRO (escaneo) ==============
-  const handleCajaKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter') {
-      e.preventDefault();
-      if (idCaja.trim()) {
-        inputPiezaRef.current?.focus();
-      }
-    }
+  // Flujo: Pieza → Enter → Caja (repetir) → solo ceros = volver a Pieza
+  const generarGrupo = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+    return 'xxxx-xxxx-xxxx'.replace(/x/g, () => Math.floor(Math.random() * 16).toString(16));
   };
 
   const handlePiezaKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (idCaja.trim() && idPieza.trim()) {
+      if (idPieza.trim()) {
+        setPiezaActiva(true);
+        setCajasAsociadas(0);
+        setGrupoPaqueteActual(generarGrupo());
+        inputCajaRef.current?.focus();
+      }
+    }
+  };
+
+  const handleCajaKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      const val = idCaja.trim();
+      // Detectar código terminador: cualquier cadena de solo ceros (0000, 00000, etc.)
+      if (/^0+$/.test(val)) {
+        if (cajasAsociadas > 0) {
+          toast.success(`✅ ${idPieza.trim().toUpperCase()}: ${cajasAsociadas} caja${cajasAsociadas > 1 ? 's' : ''} asociada${cajasAsociadas > 1 ? 's' : ''}`, { duration: 3000 });
+        }
+        setIdCaja('');
+        setIdPieza('');
+        setPiezaActiva(false);
+        setCajasAsociadas(0);
+        setGrupoPaqueteActual('');
+        inputPiezaRef.current?.focus();
+        return;
+      }
+      if (val && idPieza.trim()) {
         registrar();
       }
     }
@@ -464,22 +709,28 @@ function PaqueteriaContent() {
     }
     setRegistrando(true);
     try {
-      const payload: any = { id_caja: idCaja.trim(), id_pieza: idPieza.trim() };
+      const payload: any = {
+        id_caja: idCaja.trim(),
+        id_pieza: idPieza.trim(),
+        grupo_paquete: grupoPaqueteActual || undefined,
+      };
       if (esSysowner && selectedEmpresa) payload.entorno_id = selectedEmpresa;
+      if (sucursalSeleccionada !== null) payload.sucursal_id = sucursalSeleccionada;
       await axios.post(
         `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/registrar`,
         payload,
         { withCredentials: true }
       );
-      toast.success(`${idPieza.trim().toUpperCase()} → Caja ${idCaja.trim().toUpperCase()}`);
+      const count = cajasAsociadas + 1;
+      setCajasAsociadas(count);
+      toast.success(`📦 ${idCaja.trim().toUpperCase()} → ${idPieza.trim().toUpperCase()} (${count})`, { duration: 1500 });
       setIdCaja('');
-      setIdPieza('');
       // Recargar datos
       cargarRanking();
       if (!esAdmin) cargarMisRegistros();
       if (esAdmin && mostrarTodos) cargarTodosRegistros();
       if (usuarioSeleccionado) verDetalleUsuario(usuarioSeleccionado);
-      // Volver al campo caja
+      // Seguir en campo caja
       inputCajaRef.current?.focus();
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Error al registrar');
@@ -488,7 +739,28 @@ function PaqueteriaContent() {
     }
   };
 
+  // Agrupa registros por grupo_paquete (registros sin grupo = individuales)
+  const agruparRegistros = (registros: RegistroPaquete[]) => {
+    const grupos: { key: string; pieza: string; items: RegistroPaquete[] }[] = [];
+    const seen = new Set<string>();
+    for (const reg of registros) {
+      const key = reg.grupo_paquete || `_solo_${reg.id}`;
+      if (seen.has(key)) {
+        const grupo = grupos.find(g => g.key === key);
+        if (grupo) grupo.items.push(reg);
+      } else {
+        seen.add(key);
+        grupos.push({ key, pieza: reg.id_pieza, items: [reg] });
+      }
+    }
+    return grupos;
+  };
+
   const borrarRegistro = async (registroId: number) => {
+    if (esVistaGeneral) {
+      toast.error('Selecciona una sucursal para borrar registros');
+      return;
+    }
     if (!confirm('¿Estás seguro de que deseas borrar este registro?')) return;
     setBorrando(registroId);
     try {
@@ -510,6 +782,10 @@ function PaqueteriaContent() {
 
   // ============== EDITAR REGISTRO ==============
   const iniciarEdicion = (reg: RegistroPaquete) => {
+    if (esVistaGeneral) {
+      toast.error('Selecciona una sucursal para editar registros');
+      return;
+    }
     setEditandoId(reg.id);
     setEditCaja(reg.id_caja);
     setEditPieza(reg.id_pieza);
@@ -645,6 +921,7 @@ function PaqueteriaContent() {
       if (fechaDesde) params.push(`desde=${fechaDesde}`);
       if (fechaHasta) params.push(`hasta=${fechaHasta}`);
       if (esSysowner && selectedEmpresa) params.push(`entorno_id=${selectedEmpresa}`);
+      if (sucursalSeleccionada !== null) params.push(`sucursal_id=${sucursalSeleccionada}`);
       if (params.length > 0) url += '?' + params.join('&');
       const res = await axios.get<ResumenTipoCaja[]>(url, { withCredentials: true });
       setResumenCajas(res.data);
@@ -677,6 +954,7 @@ function PaqueteriaContent() {
       const params: string[] = [];
       if (fechaDesde) params.push(`desde=${fechaDesde}`);
       if (fechaHasta) params.push(`hasta=${fechaHasta}`);
+      if (sucursalSeleccionada !== null) params.push(`sucursal_id=${sucursalSeleccionada}`);
       if (params.length > 0) url += '?' + params.join('&');
       const res = await axios.get<MovimientoCaja[]>(url, { withCredentials: true });
       setMovimientosTipo(prev => ({ ...prev, [tipoId]: res.data }));
@@ -699,13 +977,15 @@ function PaqueteriaContent() {
     }
     setRegistrandoMov(true);
     try {
+      const payload: any = {
+        cantidad,
+        tipo_movimiento,
+        notas: notasMovimiento[tipoId] || null,
+      };
+      if (sucursalSeleccionada !== null) payload.sucursal_id = sucursalSeleccionada;
       await axios.post(
         `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/tipos-caja/${tipoId}/movimiento`,
-        {
-          cantidad,
-          tipo_movimiento,
-          notas: notasMovimiento[tipoId] || null,
-        },
+        payload,
         { withCredentials: true }
       );
       toast.success(tipo_movimiento === 'entrada'
@@ -757,6 +1037,142 @@ function PaqueteriaContent() {
 
   return (
     <div className="min-h-screen bg-gray-50">
+      {/* Modal Selector Sucursal */}
+      {mostrarModalSucursal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl shadow-2xl p-6 max-w-md w-full mx-4">
+            <h3 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
+              <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-blue-600">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Z" />
+              </svg>
+              Selecciona sucursal
+            </h3>
+            <p className="text-sm text-gray-500 mb-4">¿Desde dónde estás trabajando?</p>
+
+            <div className="space-y-2 mb-4">
+              {sucursales.length > 1 && (
+                <button
+                  onClick={() => seleccionarSucursal(null)}
+                  className="w-full text-left px-4 py-3 rounded-xl border-2 border-gray-200 hover:border-gray-400 hover:bg-gray-50 transition-all flex items-center gap-3"
+                >
+                  <div className="w-4 h-4 rounded-full bg-gray-400" />
+                  <div>
+                    <span className="font-semibold text-gray-900">General</span>
+                    <span className="text-xs text-gray-400 ml-2">(solo lectura)</span>
+                  </div>
+                </button>
+              )}
+              {sucursales.map(suc => (
+                <div key={suc.id} className="flex items-center gap-2">
+                  {editandoSucursalId === suc.id ? (
+                    <div className="flex-1 flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-blue-300 bg-blue-50">
+                      <input
+                        type="text"
+                        value={editSucursalNombre}
+                        onChange={e => setEditSucursalNombre(e.target.value)}
+                        className="flex-1 px-2 py-1 border border-gray-300 rounded text-sm focus:outline-none focus:ring-1 focus:ring-blue-500"
+                      />
+                      <input
+                        type="color"
+                        value={editSucursalColor}
+                        onChange={e => setEditSucursalColor(e.target.value)}
+                        className="w-8 h-7 rounded border border-gray-300 cursor-pointer"
+                      />
+                      <button
+                        onClick={() => guardarEdicionSucursal(suc.id)}
+                        className="p-1 text-green-600 hover:text-green-700"
+                        title="Guardar"
+                      >
+                        <CheckIcon />
+                      </button>
+                      <button
+                        onClick={cancelarEdicionSucursal}
+                        className="p-1 text-gray-400 hover:text-gray-600"
+                        title="Cancelar"
+                      >
+                        <XIcon />
+                      </button>
+                    </div>
+                  ) : (
+                    <>
+                      <button
+                        onClick={() => seleccionarSucursal(suc.id)}
+                        className="flex-1 text-left px-4 py-3 rounded-xl border-2 border-gray-200 hover:border-blue-400 hover:bg-blue-50 transition-all flex items-center gap-3"
+                      >
+                        <div className="w-4 h-4 rounded-full" style={{ backgroundColor: suc.color_hex }} />
+                        <span className="font-semibold text-gray-900">{suc.nombre}</span>
+                      </button>
+                      {esAdmin && !suc.es_legacy && (
+                        <div className="flex items-center gap-1">
+                          <button
+                            onClick={(e) => { e.stopPropagation(); iniciarEdicionSucursal(suc); }}
+                            className="p-1.5 text-gray-400 hover:text-blue-600 rounded-lg hover:bg-blue-50"
+                            title="Editar sucursal"
+                          >
+                            <PencilIcon />
+                          </button>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); borrarSucursal(suc.id); }}
+                            disabled={borrandoSucursal === suc.id}
+                            className="p-1.5 text-gray-400 hover:text-red-600 rounded-lg hover:bg-red-50 disabled:opacity-50"
+                            title="Borrar sucursal"
+                          >
+                            {borrandoSucursal === suc.id ? <span className="text-xs">...</span> : <TrashIcon />}
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Crear nueva sucursal (solo admin) */}
+            {esAdmin && (
+              <div className="border-t border-gray-200 pt-4 mt-4">
+                <p className="text-xs text-gray-500 mb-2">Crear nueva sucursal:</p>
+                {esSysowner && !selectedEmpresa ? (
+                  <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2">
+                    Selecciona una empresa arriba antes de crear sucursales.
+                  </p>
+                ) : (
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={nuevaSucursalNombre}
+                      onChange={e => setNuevaSucursalNombre(e.target.value)}
+                      placeholder="Nombre..."
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                    <input
+                      type="color"
+                      value={nuevaSucursalColor}
+                      onChange={e => setNuevaSucursalColor(e.target.value)}
+                      className="w-10 h-9 rounded border border-gray-300 cursor-pointer"
+                    />
+                    <button
+                      onClick={crearSucursal}
+                      disabled={creandoSucursal || !nuevaSucursalNombre.trim()}
+                      className="px-3 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium"
+                    >
+                      {creandoSucursal ? '...' : '+'}
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Cerrar modal */}
+            <button
+              onClick={() => setMostrarModalSucursal(false)}
+              className="mt-4 w-full text-center text-sm text-gray-400 hover:text-gray-600"
+            >
+              {sucursalSeleccionada !== null ? 'Cancelar' : 'Cerrar'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Navbar */}
       <nav className="bg-white shadow-lg">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -770,7 +1186,26 @@ function PaqueteriaContent() {
                 <p className="text-xs text-gray-500">Gestión Paquetería</p>
               </div>
             </div>
-            <div className="flex items-center space-x-4">
+            <div className="flex items-center space-x-3">
+              {/* Badge sucursal */}
+              {(sucursales.length > 0 || esAdmin) && (
+                <button
+                  onClick={() => setMostrarModalSucursal(true)}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-full border border-gray-200 hover:bg-gray-50 transition-colors text-sm"
+                  title="Cambiar sucursal"
+                >
+                  <div
+                    className="w-3 h-3 rounded-full"
+                    style={{ backgroundColor: sucursalActual?.color_hex || '#9CA3AF' }}
+                  />
+                  <span className="font-medium text-gray-700">
+                    {sucursalActual?.nombre || 'General'}
+                  </span>
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className="w-3 h-3 text-gray-400">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                  </svg>
+                </button>
+              )}
               <p className="text-sm font-medium text-gray-900 hidden sm:block">{user.email}</p>
               <button onClick={handleLogout} className="bg-red-600 hover:bg-red-700 text-white px-4 py-2 rounded-lg transition-colors">
                 Logout
@@ -805,6 +1240,19 @@ function PaqueteriaContent() {
         )}
 
         {/* ============ ZONA DE ESCANEO ============ */}
+        {esVistaGeneral && sucursales.length > 0 ? (
+          <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 mb-4 text-center">
+            <p className="text-amber-700 font-medium">
+              Vista General: solo lectura. Para registrar piezas, selecciona una sucursal.
+            </p>
+            <button
+              onClick={() => setMostrarModalSucursal(true)}
+              className="mt-2 px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Seleccionar sucursal
+            </button>
+          </div>
+        ) : (
         <div className="bg-white rounded-lg shadow p-6 mb-4">
           <h2 className="text-lg font-semibold text-gray-900 mb-4 flex items-center gap-2">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-amber-500">
@@ -814,19 +1262,6 @@ function PaqueteriaContent() {
           </h2>
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-600 mb-1">ID Caja</label>
-              <input
-                ref={inputCajaRef}
-                type="text"
-                value={idCaja}
-                onChange={(e) => setIdCaja(e.target.value)}
-                onKeyDown={handleCajaKeyDown}
-                placeholder="Escanea o escribe el ID de la caja..."
-                className="w-full px-4 py-3 text-lg border-2 border-amber-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-amber-500 focus:border-amber-500 font-mono uppercase"
-                autoComplete="off"
-              />
-            </div>
-            <div className="flex-1">
               <label className="block text-sm font-medium text-gray-600 mb-1">ID Pieza</label>
               <input
                 ref={inputPiezaRef}
@@ -834,12 +1269,61 @@ function PaqueteriaContent() {
                 value={idPieza}
                 onChange={(e) => setIdPieza(e.target.value)}
                 onKeyDown={handlePiezaKeyDown}
-                placeholder="Escanea o escribe el ID de la pieza..."
-                className="w-full px-4 py-3 text-lg border-2 border-blue-300 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 font-mono uppercase"
+                placeholder="Escanea la pieza..."
+                className={`w-full px-4 py-3 text-lg border-2 rounded-xl focus:outline-none focus:ring-2 font-mono uppercase ${
+                  piezaActiva
+                    ? 'border-green-400 bg-green-50 focus:ring-green-500 focus:border-green-500'
+                    : 'border-blue-300 focus:ring-blue-500 focus:border-blue-500'
+                }`}
                 autoComplete="off"
+                disabled={piezaActiva}
               />
             </div>
-            <div className="flex items-end">
+            <div className="flex-1 relative">
+              <label className="block text-sm font-medium text-gray-600 mb-1">
+                ID Caja
+                {piezaActiva && cajasAsociadas > 0 && (
+                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-green-100 text-green-700">
+                    {cajasAsociadas} caja{cajasAsociadas > 1 ? 's' : ''}
+                  </span>
+                )}
+              </label>
+              <input
+                ref={inputCajaRef}
+                type="text"
+                value={idCaja}
+                onChange={(e) => setIdCaja(e.target.value)}
+                onKeyDown={handleCajaKeyDown}
+                placeholder={piezaActiva ? 'Escanea cajas... (0000 = siguiente pieza)' : 'Primero escanea la pieza'}
+                className={`w-full px-4 py-3 text-lg border-2 rounded-xl focus:outline-none focus:ring-2 font-mono uppercase ${
+                  piezaActiva
+                    ? 'border-amber-300 focus:ring-amber-500 focus:border-amber-500'
+                    : 'border-gray-200 bg-gray-50 text-gray-400'
+                }`}
+                autoComplete="off"
+                disabled={!piezaActiva}
+              />
+            </div>
+            <div className="flex items-end gap-2">
+              {piezaActiva && (
+                <button
+                  onClick={() => {
+                    if (cajasAsociadas > 0) {
+                      toast.success(`✅ ${idPieza.trim().toUpperCase()}: ${cajasAsociadas} caja${cajasAsociadas > 1 ? 's' : ''} asociada${cajasAsociadas > 1 ? 's' : ''}`, { duration: 3000 });
+                    }
+                    setIdCaja('');
+                    setIdPieza('');
+                    setPiezaActiva(false);
+                    setCajasAsociadas(0);
+                    setGrupoPaqueteActual('');
+                    inputPiezaRef.current?.focus();
+                  }}
+                  className="px-4 py-3 bg-gray-500 hover:bg-gray-600 text-white rounded-xl font-semibold text-sm transition-colors whitespace-nowrap"
+                  title="Terminar pieza actual (o escanea 0000)"
+                >
+                  Siguiente pieza
+                </button>
+              )}
               <button
                 onClick={registrar}
                 disabled={registrando || !idCaja.trim() || !idPieza.trim()}
@@ -850,9 +1334,10 @@ function PaqueteriaContent() {
             </div>
           </div>
           <p className="text-xs text-gray-400 mt-2">
-            Escanea la caja → pulsa Enter → escanea la pieza → pulsa Enter → se registra y vuelve a caja
+            Escanea pieza → Enter → escanea cajas una a una → Enter cada una → escanea <span className="font-bold text-gray-500">0000</span> para pasar a la siguiente pieza
           </p>
         </div>
+        )}
 
         {/* ============ PESTAÑAS ============ */}
         <div className="bg-white rounded-lg shadow">
@@ -942,10 +1427,12 @@ function PaqueteriaContent() {
             </div>
           ) : (
             <>
-              {/* Total general */}
-              <div className="mb-4 text-center">
+              <div className="mb-4 text-center flex gap-3 justify-center flex-wrap">
                 <span className="inline-block bg-amber-100 text-amber-800 px-4 py-2 rounded-full font-bold text-lg">
-                  Total: {ranking.total_general} paquetes
+                  {ranking.total_paquetes} paquete{ranking.total_paquetes !== 1 ? 's' : ''}
+                </span>
+                <span className="inline-block bg-blue-100 text-blue-800 px-4 py-2 rounded-full font-bold text-lg">
+                  {ranking.total_general} material{ranking.total_general !== 1 ? 'es' : ''}
                 </span>
               </div>
 
@@ -973,8 +1460,11 @@ function PaqueteriaContent() {
                         </div>
                         <div className="flex items-center gap-4">
                           <div className="text-right">
-                            <p className="text-2xl font-bold text-gray-900">{usr.total_registros}</p>
-                            <p className="text-xs text-gray-400">paquetes</p>
+                            <p className="text-2xl font-bold text-gray-900">{usr.total_paquetes}</p>
+                            <p className="text-xs text-gray-400">paquete{usr.total_paquetes !== 1 ? 's' : ''}</p>
+                            {usr.total_registros > usr.total_paquetes && (
+                              <p className="text-xs text-blue-500">{usr.total_registros} mat.</p>
+                            )}
                           </div>
                           {usr.primera && usr.ultima && (
                             <div className="text-right text-xs text-gray-400 hidden sm:block">
@@ -999,67 +1489,93 @@ function PaqueteriaContent() {
                             </div>
                           ) : detalleRegistros.length === 0 ? (
                             <p className="text-gray-500 text-sm text-center py-2">Sin registros</p>
-                          ) : (
-                            <div className="space-y-1">
+                          ) : (() => {
+                            const grupos = agruparRegistros(detalleRegistros);
+                            return (
+                            <div className="space-y-2">
                               <div className="text-sm font-medium text-gray-700 mb-2">
-                                Desglose de {detalleRegistros.length} registros — Operario: <span className="text-blue-600">{usr.usuario_nombre || usr.usuario_email}</span>
+                                {grupos.length} paquete{grupos.length !== 1 ? 's' : ''} ({detalleRegistros.length} material{detalleRegistros.length !== 1 ? 'es' : ''}) — Operario: <span className="text-blue-600">{usr.usuario_nombre || usr.usuario_email}</span>
                               </div>
-                              <div className="grid grid-cols-12 gap-2 text-xs font-medium text-gray-500 uppercase px-2 py-1">
-                                <div className="col-span-1">#</div>
-                                <div className="col-span-2">Hora</div>
-                                <div className="col-span-4">ID Caja</div>
-                                <div className="col-span-3">ID Pieza</div>
-                                <div className="col-span-2 text-center">Acciones</div>
-                              </div>
-                              {detalleRegistros.map((reg, i) => {
-                                const esEditandoReg = editandoId === reg.id;
-                                if (esEditandoReg) {
-                                  return (
-                                    <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-2 py-1.5 rounded bg-amber-50 border border-amber-200 text-sm">
-                                      <div className="col-span-1 text-xs text-gray-400">#{i + 1}</div>
-                                      <div className="col-span-2 font-mono text-xs text-gray-600">
-                                        {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
-                                      </div>
-                                      <div className="col-span-4">
-                                        <input type="text" value={editCaja} onChange={(e) => setEditCaja(e.target.value)}
-                                          className="w-full px-2 py-1 text-xs border border-amber-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-amber-500" autoFocus />
-                                      </div>
-                                      <div className="col-span-3">
-                                        <input type="text" value={editPieza} onChange={(e) => setEditPieza(e.target.value)}
-                                          onKeyDown={(e) => { if (e.key === 'Enter') guardarEdicion(reg.id); if (e.key === 'Escape') cancelarEdicion(); }}
-                                          className="w-full px-2 py-1 text-xs border border-blue-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                                      </div>
-                                      <div className="col-span-2 flex justify-center gap-1">
-                                        <button onClick={() => guardarEdicion(reg.id)} disabled={guardandoEdit} className="p-1 text-green-600 hover:text-green-800 disabled:opacity-50" title="Guardar"><CheckIcon /></button>
-                                        <button onClick={cancelarEdicion} className="p-1 text-gray-500 hover:text-gray-700" title="Cancelar"><XIcon /></button>
-                                      </div>
-                                    </div>
-                                  );
-                                }
+                              {grupos.map((grupo, gi) => {
+                                const isMulti = grupo.items.length > 1;
+                                const isOpen = !isMulti || gruposExpandidos.has(grupo.key);
                                 return (
-                                <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-2 py-1.5 rounded bg-white border border-gray-100 hover:bg-blue-50 text-sm">
-                                  <div className="col-span-1 text-xs text-gray-400">#{i + 1}</div>
-                                  <div className="col-span-2 font-mono text-xs text-gray-600">
-                                    {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                                <div key={grupo.key} className={`rounded-lg border ${isMulti ? 'border-blue-200 bg-blue-50/30' : 'border-gray-100 bg-white'}`}>
+                                  {/* Cabecera del paquete */}
+                                  <div
+                                    className={`flex items-center justify-between px-3 py-2 ${isOpen && isMulti ? 'border-b border-gray-100' : ''} ${isMulti ? 'cursor-pointer hover:bg-blue-50/60 select-none' : ''}`}
+                                    onClick={() => isMulti && toggleGrupo(grupo.key)}
+                                  >
+                                    <div className="flex items-center gap-2">
+                                      {isMulti && (
+                                        <span className="text-gray-400 transition-transform duration-200">
+                                          {isOpen ? <ChevronDownIcon className="w-4 h-4" /> : <ChevronRightIcon className="w-4 h-4" />}
+                                        </span>
+                                      )}
+                                      <span className="text-xs font-bold text-gray-400">#{gi + 1}</span>
+                                      <span className="font-mono font-bold text-blue-700 text-sm">{grupo.pieza}</span>
+                                      {isMulti && (
+                                        <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">
+                                          {grupo.items.length} materiales
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="font-mono text-xs text-gray-400">
+                                      {new Date(grupo.items[grupo.items.length - 1].fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                                    </span>
                                   </div>
-                                  <div className="col-span-4 font-mono font-medium text-amber-700">{reg.id_caja}</div>
-                                  <div className="col-span-3 font-mono font-medium text-blue-700">{reg.id_pieza}</div>
-                                  <div className="col-span-2 flex justify-center gap-1">
-                                    <button onClick={(e) => { e.stopPropagation(); iniciarEdicion(reg); }} className="p-1 text-blue-400 hover:text-blue-600" title="Editar"><PencilIcon /></button>
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); borrarRegistro(reg.id); }}
-                                      disabled={borrando === reg.id}
-                                      className="p-1 text-red-400 hover:text-red-600 disabled:opacity-50"
-                                      title="Borrar"
-                                    >
-                                      {borrando === reg.id ? <span className="text-xs">...</span> : <TrashIcon />}
-                                    </button>
-                                  </div>
+                                  {/* Materiales/cajas del paquete */}
+                                  {isOpen && grupo.items.map((reg) => {
+                                    const esEditandoReg = editandoId === reg.id;
+                                    if (esEditandoReg) {
+                                      return (
+                                        <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-3 py-1.5 bg-amber-50 border-b border-amber-200 text-sm">
+                                          <div className="col-span-3 font-mono text-xs text-gray-500">
+                                            {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                                          </div>
+                                          <div className="col-span-4">
+                                            <input type="text" value={editCaja} onChange={(e) => setEditCaja(e.target.value)}
+                                              className="w-full px-2 py-1 text-xs border border-amber-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-amber-500" autoFocus />
+                                          </div>
+                                          <div className="col-span-3">
+                                            <input type="text" value={editPieza} onChange={(e) => setEditPieza(e.target.value)}
+                                              onKeyDown={(e) => { if (e.key === 'Enter') guardarEdicion(reg.id); if (e.key === 'Escape') cancelarEdicion(); }}
+                                              className="w-full px-2 py-1 text-xs border border-blue-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                                          </div>
+                                          <div className="col-span-2 flex justify-center gap-1">
+                                            <button onClick={() => guardarEdicion(reg.id)} disabled={guardandoEdit} className="p-1 text-green-600 hover:text-green-800 disabled:opacity-50" title="Guardar"><CheckIcon /></button>
+                                            <button onClick={cancelarEdicion} className="p-1 text-gray-500 hover:text-gray-700" title="Cancelar"><XIcon /></button>
+                                          </div>
+                                        </div>
+                                      );
+                                    }
+                                    return (
+                                      <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-3 py-1.5 hover:bg-blue-50/50 border-b border-gray-50 text-sm last:border-0">
+                                        <div className="col-span-3 font-mono text-xs text-gray-500">
+                                          {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                                        </div>
+                                        <div className="col-span-4 font-mono font-medium text-amber-700">{reg.id_caja}</div>
+                                        <div className="col-span-3 font-mono text-xs text-gray-400">{grupo.items.length > 1 ? '' : reg.id_pieza}</div>
+                                        <div className="col-span-2 flex justify-center gap-1">
+                                          <button onClick={(e) => { e.stopPropagation(); iniciarEdicion(reg); }} className="p-1 text-blue-400 hover:text-blue-600" title="Editar"><PencilIcon /></button>
+                                          <button
+                                            onClick={(e) => { e.stopPropagation(); borrarRegistro(reg.id); }}
+                                            disabled={borrando === reg.id}
+                                            className="p-1 text-red-400 hover:text-red-600 disabled:opacity-50"
+                                            title="Borrar"
+                                          >
+                                            {borrando === reg.id ? <span className="text-xs">...</span> : <TrashIcon />}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                                 );
                               })}
                             </div>
-                          )}
+                            );
+                          })()}
                         </div>
                       )}
                     </div>
@@ -1100,74 +1616,96 @@ function PaqueteriaContent() {
                     </div>
                   ) : todosRegistros.length === 0 ? (
                     <p className="text-gray-500 text-sm text-center py-4">No hay registros para esta fecha</p>
-                  ) : (
-                    <div className="space-y-1">
-                      <div className="grid grid-cols-12 gap-2 text-xs font-medium text-gray-500 uppercase px-3 py-1.5 bg-gray-50 rounded">
-                        <div className="col-span-1">#</div>
-                        <div className="col-span-2">Hora</div>
-                        <div className="col-span-2">Operario</div>
-                        <div className="col-span-2">ID Caja</div>
-                        <div className="col-span-2">ID Pieza</div>
-                        <div className="col-span-3 text-center">Acciones</div>
-                      </div>
-                      {todosRegistros.map((reg, idx) => {
-                        const esEditandoReg = editandoId === reg.id;
-
-                        if (esEditandoReg) {
-                          return (
-                            <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-3 py-2 rounded border bg-amber-50 border-amber-200">
-                              <div className="col-span-1 text-xs text-gray-400">#{idx + 1}</div>
-                              <div className="col-span-2 font-mono text-xs text-gray-600">
-                                {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
-                              </div>
-                              <div className="col-span-2 text-xs text-gray-600 truncate">{reg.usuario_nombre || reg.usuario_email.split('@')[0]}</div>
-                              <div className="col-span-2">
-                                <input type="text" value={editCaja} onChange={(e) => setEditCaja(e.target.value)}
-                                  className="w-full px-2 py-1 text-xs border border-amber-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-amber-500" autoFocus />
-                              </div>
-                              <div className="col-span-2">
-                                <input type="text" value={editPieza} onChange={(e) => setEditPieza(e.target.value)}
-                                  onKeyDown={(e) => { if (e.key === 'Enter') guardarEdicion(reg.id); if (e.key === 'Escape') cancelarEdicion(); }}
-                                  className="w-full px-2 py-1 text-xs border border-blue-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                              </div>
-                              <div className="col-span-3 flex justify-center gap-1">
-                                <button onClick={() => guardarEdicion(reg.id)} disabled={guardandoEdit} className="p-1 text-green-600 hover:text-green-800 disabled:opacity-50" title="Guardar"><CheckIcon /></button>
-                                <button onClick={cancelarEdicion} className="p-1 text-gray-500 hover:text-gray-700" title="Cancelar"><XIcon /></button>
-                              </div>
-                            </div>
-                          );
-                        }
-
+                  ) : (() => {
+                    const gruposTodos = agruparRegistros(todosRegistros);
+                    return (
+                    <div className="space-y-2">
+                      {gruposTodos.map((grupo, gi) => {
+                        const isMulti = grupo.items.length > 1;
+                        const isOpen = !isMulti || gruposExpandidos.has(grupo.key);
                         return (
-                          <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-3 py-2 rounded border bg-white border-gray-200 hover:bg-gray-50">
-                            <div className="col-span-1 text-xs text-gray-400">#{idx + 1}</div>
-                            <div className="col-span-2 font-mono text-xs text-gray-600">
-                              {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                        <div key={grupo.key} className={`rounded-lg border ${isMulti ? 'border-blue-200 bg-blue-50/30' : 'border-gray-200 bg-white'}`}>
+                          <div
+                            className={`flex items-center justify-between px-3 py-2 ${isOpen && isMulti ? 'border-b border-gray-100' : ''} ${isMulti ? 'cursor-pointer hover:bg-blue-50/60 select-none' : ''}`}
+                            onClick={() => isMulti && toggleGrupo(grupo.key)}
+                          >
+                            <div className="flex items-center gap-2">
+                              {isMulti && (
+                                <span className="text-gray-400 transition-transform duration-200">
+                                  {isOpen ? <ChevronDownIcon className="w-4 h-4" /> : <ChevronRightIcon className="w-4 h-4" />}
+                                </span>
+                              )}
+                              <span className="text-xs font-bold text-gray-400">#{gi + 1}</span>
+                              <span className="font-mono font-bold text-blue-700 text-sm">{grupo.pieza}</span>
+                              {isMulti && (
+                                <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">
+                                  {grupo.items.length} mat.
+                                </span>
+                              )}
+                              <span className="text-xs text-gray-500">{grupo.items[0].usuario_nombre || grupo.items[0].usuario_email.split('@')[0]}</span>
                             </div>
-                            <div className="col-span-2 text-sm text-gray-700 font-medium truncate" title={reg.usuario_email}>
-                              {reg.usuario_nombre || reg.usuario_email.split('@')[0]}
-                            </div>
-                            <div className="col-span-2 font-mono font-medium text-amber-700">{reg.id_caja}</div>
-                            <div className="col-span-2 font-mono font-medium text-blue-700">{reg.id_pieza}</div>
-                            <div className="col-span-3 flex justify-center gap-1">
-                              <button onClick={() => iniciarEdicion(reg)} className="p-1 text-blue-400 hover:text-blue-600" title="Editar"><PencilIcon /></button>
-                              <button
-                                onClick={() => borrarRegistro(reg.id)}
-                                disabled={borrando === reg.id}
-                                className="p-1 text-red-400 hover:text-red-600 disabled:opacity-50"
-                                title="Borrar"
-                              >
-                                {borrando === reg.id ? <span className="text-xs">...</span> : <TrashIcon />}
-                              </button>
-                            </div>
+                            <span className="font-mono text-xs text-gray-400">
+                              {new Date(grupo.items[grupo.items.length - 1].fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                            </span>
                           </div>
+                          {isOpen && grupo.items.map((reg) => {
+                            const esEditandoReg = editandoId === reg.id;
+                            if (esEditandoReg) {
+                              return (
+                                <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-3 py-1.5 bg-amber-50 border-b border-amber-200 text-sm">
+                                  <div className="col-span-2 font-mono text-xs text-gray-500">
+                                    {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                                  </div>
+                                  <div className="col-span-2 text-xs text-gray-600 truncate">{reg.usuario_nombre || reg.usuario_email.split('@')[0]}</div>
+                                  <div className="col-span-3">
+                                    <input type="text" value={editCaja} onChange={(e) => setEditCaja(e.target.value)}
+                                      className="w-full px-2 py-1 text-xs border border-amber-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-amber-500" autoFocus />
+                                  </div>
+                                  <div className="col-span-3">
+                                    <input type="text" value={editPieza} onChange={(e) => setEditPieza(e.target.value)}
+                                      onKeyDown={(e) => { if (e.key === 'Enter') guardarEdicion(reg.id); if (e.key === 'Escape') cancelarEdicion(); }}
+                                      className="w-full px-2 py-1 text-xs border border-blue-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                                  </div>
+                                  <div className="col-span-2 flex justify-center gap-1">
+                                    <button onClick={() => guardarEdicion(reg.id)} disabled={guardandoEdit} className="p-1 text-green-600 hover:text-green-800 disabled:opacity-50" title="Guardar"><CheckIcon /></button>
+                                    <button onClick={cancelarEdicion} className="p-1 text-gray-500 hover:text-gray-700" title="Cancelar"><XIcon /></button>
+                                  </div>
+                                </div>
+                              );
+                            }
+                            return (
+                              <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-3 py-1.5 hover:bg-blue-50/50 border-b border-gray-50 text-sm last:border-0">
+                                <div className="col-span-2 font-mono text-xs text-gray-500">
+                                  {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                                </div>
+                                <div className="col-span-2 text-xs text-gray-600 truncate">{reg.usuario_nombre || reg.usuario_email.split('@')[0]}</div>
+                                <div className="col-span-3 font-mono font-medium text-amber-700">{reg.id_caja}</div>
+                                <div className="col-span-3 font-mono text-xs text-gray-400">{grupo.items.length > 1 ? '' : reg.id_pieza}</div>
+                                <div className="col-span-2 flex justify-center gap-1">
+                                  <button onClick={() => iniciarEdicion(reg)} className="p-1 text-blue-400 hover:text-blue-600" title="Editar"><PencilIcon /></button>
+                                  <button
+                                    onClick={() => borrarRegistro(reg.id)}
+                                    disabled={borrando === reg.id}
+                                    className="p-1 text-red-400 hover:text-red-600 disabled:opacity-50"
+                                    title="Borrar"
+                                  >
+                                    {borrando === reg.id ? <span className="text-xs">...</span> : <TrashIcon />}
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
                         );
                       })}
                       <div className="pt-2 mt-2 border-t border-gray-200 text-right">
-                        <span className="text-sm font-medium text-gray-600">Total: <span className="font-bold text-blue-600">{todosRegistros.length}</span> registros</span>
+                        <span className="text-sm font-medium text-gray-600">
+                          {gruposTodos.length} paquete{gruposTodos.length !== 1 ? 's' : ''} · <span className="font-bold text-blue-600">{todosRegistros.length}</span> materiales
+                        </span>
                       </div>
                     </div>
-                  )}
+                    );
+                  })()}
                 </>
               )}
             </div>
@@ -1183,73 +1721,95 @@ function PaqueteriaContent() {
                 </div>
               ) : misRegistros.length === 0 ? (
                 <p className="text-gray-500 text-sm text-center py-4">No tienes registros para esta fecha</p>
-              ) : (
-                <div className="space-y-1">
-                  <div className="grid grid-cols-12 gap-2 text-xs font-medium text-gray-500 uppercase px-3 py-1.5 bg-gray-50 rounded">
-                    <div className="col-span-1">#</div>
-                    <div className="col-span-2">Hora</div>
-                    <div className="col-span-3">ID Caja</div>
-                    <div className="col-span-3">ID Pieza</div>
-                    <div className="col-span-3 text-center">Acciones</div>
-                  </div>
-                  {misRegistros.map((reg, idx) => {
-                    const esDeHoy = esFechaHoy(reg.fecha_registro);
-                    const esEditandoReg = editandoId === reg.id;
-
-                    if (esEditandoReg) {
-                      return (
-                        <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-3 py-2 rounded border bg-amber-50 border-amber-200">
-                          <div className="col-span-1 text-xs text-gray-400">#{idx + 1}</div>
-                          <div className="col-span-2 font-mono text-xs text-gray-600">
-                            {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
-                          </div>
-                          <div className="col-span-3">
-                            <input type="text" value={editCaja} onChange={(e) => setEditCaja(e.target.value)}
-                              className="w-full px-2 py-1 text-xs border border-amber-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-amber-500" autoFocus />
-                          </div>
-                          <div className="col-span-3">
-                            <input type="text" value={editPieza} onChange={(e) => setEditPieza(e.target.value)}
-                              onKeyDown={(e) => { if (e.key === 'Enter') guardarEdicion(reg.id); if (e.key === 'Escape') cancelarEdicion(); }}
-                              className="w-full px-2 py-1 text-xs border border-blue-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-blue-500" />
-                          </div>
-                          <div className="col-span-3 flex justify-center gap-1">
-                            <button onClick={() => guardarEdicion(reg.id)} disabled={guardandoEdit} className="p-1 text-green-600 hover:text-green-800 disabled:opacity-50" title="Guardar"><CheckIcon /></button>
-                            <button onClick={cancelarEdicion} className="p-1 text-gray-500 hover:text-gray-700" title="Cancelar"><XIcon /></button>
-                          </div>
-                        </div>
-                      );
-                    }
-
+              ) : (() => {
+                const gruposMis = agruparRegistros(misRegistros);
+                return (
+                <div className="space-y-2">
+                  {gruposMis.map((grupo, gi) => {
+                    const isMulti = grupo.items.length > 1;
+                    const isOpen = !isMulti || gruposExpandidos.has(grupo.key);
                     return (
-                      <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-3 py-2 rounded border bg-white border-gray-200 hover:bg-gray-50">
-                        <div className="col-span-1 text-xs text-gray-400">#{idx + 1}</div>
-                        <div className="col-span-2 font-mono text-xs text-gray-600">
-                          {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
-                        </div>
-                        <div className="col-span-3 font-mono font-medium text-amber-700">{reg.id_caja}</div>
-                        <div className="col-span-3 font-mono font-medium text-blue-700">{reg.id_pieza}</div>
-                        <div className="col-span-3 flex justify-center gap-1">
-                          {esDeHoy && (
-                            <button onClick={() => iniciarEdicion(reg)} className="p-1 text-blue-400 hover:text-blue-600" title="Editar"><PencilIcon /></button>
+                    <div key={grupo.key} className={`rounded-lg border ${isMulti ? 'border-blue-200 bg-blue-50/30' : 'border-gray-200 bg-white'}`}>
+                      <div
+                        className={`flex items-center justify-between px-3 py-2 ${isOpen && isMulti ? 'border-b border-gray-100' : ''} ${isMulti ? 'cursor-pointer hover:bg-blue-50/60 select-none' : ''}`}
+                        onClick={() => isMulti && toggleGrupo(grupo.key)}
+                      >
+                        <div className="flex items-center gap-2">
+                          {isMulti && (
+                            <span className="text-gray-400 transition-transform duration-200">
+                              {isOpen ? <ChevronDownIcon className="w-4 h-4" /> : <ChevronRightIcon className="w-4 h-4" />}
+                            </span>
                           )}
-                          {esDeHoy ? (
-                            <button
-                              onClick={() => borrarRegistro(reg.id)}
-                              disabled={borrando === reg.id}
-                              className="p-1 text-red-500 hover:text-red-700 disabled:opacity-50"
-                              title="Borrar registro"
-                            >
-                              {borrando === reg.id ? <span className="text-xs">...</span> : <TrashIcon />}
-                            </button>
-                          ) : (
-                            <span className="text-gray-300 text-xs">—</span>
+                          <span className="text-xs font-bold text-gray-400">#{gi + 1}</span>
+                          <span className="font-mono font-bold text-blue-700 text-sm">{grupo.pieza}</span>
+                          {isMulti && (
+                            <span className="px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">
+                              {grupo.items.length} mat.
+                            </span>
                           )}
                         </div>
+                        <span className="font-mono text-xs text-gray-400">
+                          {new Date(grupo.items[grupo.items.length - 1].fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                        </span>
                       </div>
+                      {isOpen && grupo.items.map((reg) => {
+                        const esDeHoy = esFechaHoy(reg.fecha_registro);
+                        const esEditandoReg = editandoId === reg.id;
+                        if (esEditandoReg) {
+                          return (
+                            <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-3 py-1.5 bg-amber-50 border-b border-amber-200 text-sm">
+                              <div className="col-span-3 font-mono text-xs text-gray-500">
+                                {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                              </div>
+                              <div className="col-span-4">
+                                <input type="text" value={editCaja} onChange={(e) => setEditCaja(e.target.value)}
+                                  className="w-full px-2 py-1 text-xs border border-amber-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-amber-500" autoFocus />
+                              </div>
+                              <div className="col-span-3">
+                                <input type="text" value={editPieza} onChange={(e) => setEditPieza(e.target.value)}
+                                  onKeyDown={(e) => { if (e.key === 'Enter') guardarEdicion(reg.id); if (e.key === 'Escape') cancelarEdicion(); }}
+                                  className="w-full px-2 py-1 text-xs border border-blue-300 rounded font-mono uppercase focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                              </div>
+                              <div className="col-span-2 flex justify-center gap-1">
+                                <button onClick={() => guardarEdicion(reg.id)} disabled={guardandoEdit} className="p-1 text-green-600 hover:text-green-800 disabled:opacity-50" title="Guardar"><CheckIcon /></button>
+                                <button onClick={cancelarEdicion} className="p-1 text-gray-500 hover:text-gray-700" title="Cancelar"><XIcon /></button>
+                              </div>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div key={reg.id} className="grid grid-cols-12 gap-2 items-center px-3 py-1.5 hover:bg-blue-50/50 border-b border-gray-50 text-sm last:border-0">
+                            <div className="col-span-3 font-mono text-xs text-gray-500">
+                              {new Date(reg.fecha_registro).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' })}
+                            </div>
+                            <div className="col-span-4 font-mono font-medium text-amber-700">{reg.id_caja}</div>
+                            <div className="col-span-3 font-mono text-xs text-gray-400">{grupo.items.length > 1 ? '' : reg.id_pieza}</div>
+                            <div className="col-span-2 flex justify-center gap-1">
+                              {esDeHoy && (
+                                <button onClick={() => iniciarEdicion(reg)} className="p-1 text-blue-400 hover:text-blue-600" title="Editar"><PencilIcon /></button>
+                              )}
+                              {esDeHoy ? (
+                                <button
+                                  onClick={() => borrarRegistro(reg.id)}
+                                  disabled={borrando === reg.id}
+                                  className="p-1 text-red-500 hover:text-red-700 disabled:opacity-50"
+                                  title="Borrar registro"
+                                >
+                                  {borrando === reg.id ? <span className="text-xs">...</span> : <TrashIcon />}
+                                </button>
+                              ) : (
+                                <span className="text-gray-300 text-xs">--</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
                     );
                   })}
                 </div>
-              )}
+                );
+              })()}
             </div>
           )}
             </div>
@@ -1417,9 +1977,23 @@ function PaqueteriaContent() {
               <h2 className="text-lg font-semibold text-gray-900 mb-2 flex items-center gap-2">
                 <InventoryIcon className="w-5 h-5 text-emerald-500" />
                 Control de Inventario de Cajas
+                {sucursalActual && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-700">
+                    <div className="w-2 h-2 rounded-full" style={{ backgroundColor: sucursalActual.color_hex }} />
+                    {sucursalActual.nombre}
+                  </span>
+                )}
+                {esVistaGeneral && sucursales.length > 0 && (
+                  <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">
+                    General (todas)
+                  </span>
+                )}
               </h2>
               <p className="text-sm text-gray-500 mb-4">
-                Gestiona el stock de cada tipo de caja: cuántas tienes, cuántas has gastado y el ritmo de consumo.
+                {sucursalActual
+                  ? `Stock de cajas en ${sucursalActual.nombre}. Cambia de sucursal desde el selector del menú.`
+                  : 'Gestiona el stock de cada tipo de caja: cuántas tienes, cuántas has gastado y el ritmo de consumo.'
+                }
               </p>
 
               {/* Filtro por fechas */}
@@ -1551,6 +2125,27 @@ function PaqueteriaContent() {
                             </div>
                           </div>
 
+                          {/* Desglose por sucursal (solo en vista General con múltiples sucursales) */}
+                          {esVistaGeneral && resumen.stock_por_sucursal && resumen.stock_por_sucursal.length > 0 && (
+                            <div className="mt-3 pt-3 border-t border-gray-100">
+                              <p className="text-xs font-medium text-gray-500 mb-2">Stock por sucursal:</p>
+                              <div className="flex flex-wrap gap-2">
+                                {resumen.stock_por_sucursal.map(ss => (
+                                  <div
+                                    key={ss.sucursal_id}
+                                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-gray-200 bg-white text-sm"
+                                  >
+                                    <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: ss.color_hex }} />
+                                    <span className="text-gray-600">{ss.sucursal_nombre}</span>
+                                    <span className={`font-bold ${ss.stock_actual === 0 ? 'text-red-500' : ss.stock_actual <= 5 ? 'text-amber-600' : 'text-emerald-600'}`}>
+                                      {ss.stock_actual}
+                                    </span>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+
                           {/* Acciones rápidas: añadir/consumir (solo admin) */}
                           {esAdmin && (
                           <div className="mt-3 pt-3 border-t border-gray-200 flex flex-wrap items-center gap-3">
@@ -1636,8 +2231,9 @@ function PaqueteriaContent() {
                                   <div className="col-span-2">Fecha</div>
                                   <div className="col-span-2">Tipo</div>
                                   <div className="col-span-2 text-right">Cantidad</div>
-                                  <div className="col-span-3">Notas</div>
-                                  <div className="col-span-3">Usuario</div>
+                                  <div className={esVistaGeneral ? 'col-span-2' : 'col-span-3'}>Notas</div>
+                                  {esVistaGeneral && <div className="col-span-2">Sucursal</div>}
+                                  <div className={esVistaGeneral ? 'col-span-2' : 'col-span-3'}>Usuario</div>
                                 </div>
                                 {movs.map((m) => (
                                   <div key={m.id} className="grid grid-cols-12 gap-2 items-center px-3 py-2 rounded bg-white border border-gray-100 text-sm">
@@ -1664,8 +2260,13 @@ function PaqueteriaContent() {
                                     }`}>
                                       {m.cantidad > 0 ? '+' : ''}{m.cantidad}
                                     </div>
-                                    <div className="col-span-3 text-xs text-gray-500 truncate">{m.notas || '—'}</div>
-                                    <div className="col-span-3 text-xs text-gray-400 truncate">{m.usuario_email || '—'}</div>
+                                    <div className={`${esVistaGeneral ? 'col-span-2' : 'col-span-3'} text-xs text-gray-500 truncate`}>{m.notas || '—'}</div>
+                                    {esVistaGeneral && (
+                                      <div className="col-span-2 text-xs text-gray-500 truncate">
+                                        {m.sucursal_nombre || '—'}
+                                      </div>
+                                    )}
+                                    <div className={`${esVistaGeneral ? 'col-span-2' : 'col-span-3'} text-xs text-gray-400 truncate`}>{m.usuario_email || '—'}</div>
                                   </div>
                                 ))}
                               </div>
@@ -1878,7 +2479,7 @@ function PaqueteriaContent() {
                                   <span className="text-sm font-medium text-gray-800 truncate">
                                     {usr.usuario_nombre || usr.usuario_email.split('@')[0]}
                                   </span>
-                                  <span className="text-sm font-bold text-gray-900 ml-2">{usr.total}</span>
+                                  <span className="text-sm font-bold text-gray-900 ml-2">{usr.total} pieza{usr.total !== 1 ? 's' : ''}</span>
                                 </div>
                                 <div className="w-full bg-gray-100 rounded-full h-2">
                                   <div
@@ -1935,6 +2536,42 @@ function PaqueteriaContent() {
                                 <span className="text-xs text-gray-400">{caja.porcentaje}%</span>
                               </div>
                             </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Desglose por sucursal (solo en vista General) */}
+                    {esVistaGeneral && estadisticas.por_sucursal && estadisticas.por_sucursal.length > 0 && (
+                      <div className="bg-white rounded-xl p-5 border border-gray-200 md:col-span-2">
+                        <h3 className="text-md font-semibold text-gray-900 mb-4 flex items-center gap-2">
+                          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5 text-blue-500">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M2.25 21h19.5m-18-18v18m10.5-18v18m6-13.5V21M6.75 6.75h.75m-.75 3h.75m-.75 3h.75m3-6h.75m-.75 3h.75m-.75 3h.75M6.75 21v-3.375c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125V21M3 3h12m-.75 4.5H21m-3.75 3.75h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Zm0 3h.008v.008h-.008v-.008Z" />
+                          </svg>
+                          Desglose por Sucursal
+                        </h3>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                          {estadisticas.por_sucursal.map(suc => (
+                            <button
+                              key={suc.sucursal_id}
+                              onClick={() => seleccionarSucursal(suc.sucursal_id)}
+                              className="text-left p-4 rounded-xl border-2 border-gray-100 hover:border-blue-300 hover:shadow transition-all"
+                            >
+                              <div className="flex items-center gap-2 mb-2">
+                                <div className="w-3 h-3 rounded-full" style={{ backgroundColor: suc.color_hex }} />
+                                <span className="font-semibold text-gray-900">{suc.sucursal_nombre}</span>
+                              </div>
+                              <div className="grid grid-cols-2 gap-2 text-sm">
+                                <div>
+                                  <span className="text-gray-500">Hoy:</span>{' '}
+                                  <span className="font-bold" style={{ color: suc.color_hex }}>{suc.total_hoy}</span>
+                                </div>
+                                <div>
+                                  <span className="text-gray-500">Mes:</span>{' '}
+                                  <span className="font-bold" style={{ color: suc.color_hex }}>{suc.total_mes}</span>
+                                </div>
+                              </div>
+                            </button>
                           ))}
                         </div>
                       </div>

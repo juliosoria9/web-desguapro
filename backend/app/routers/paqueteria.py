@@ -1,22 +1,28 @@
 """
 Router para gestión de paquetería (tipo fichaje: escanear caja + pieza)
+Con soporte de sucursales/puestos por entorno de trabajo.
 Accesible para todos los usuarios del entorno
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, String
 from typing import Optional
 from datetime import datetime, date, timedelta
 import logging
 
 from app.database import get_db
-from app.models.busqueda import RegistroPaquete, Usuario, EntornoTrabajo, TipoCaja, MovimientoCaja
+from app.models.busqueda import (
+    RegistroPaquete, Usuario, EntornoTrabajo, TipoCaja, MovimientoCaja,
+    SucursalPaqueteria, StockCajaSucursal,
+)
 from app.schemas.paqueteria import (
     RegistroPaqueteCreate, RegistroPaqueteUpdate, RegistroPaqueteResponse,
     RankingUsuario, RankingResponse, MisRegistrosResponse,
     TipoCajaCreate, TipoCajaUpdate, TipoCajaResponse,
     MovimientoCajaCreate, MovimientoCajaResponse, ResumenTipoCaja,
     EstadisticasPaqueteriaResponse, EstadisticasDia, EstadisticasUsuario, EstadisticasCaja,
+    SucursalPaqueteriaCreate, SucursalPaqueteriaUpdate, SucursalPaqueteriaResponse,
+    EstadisticasSucursal, StockSucursalInfo,
 )
 from app.dependencies import get_current_user
 from utils.timezone import now_spain_naive
@@ -39,6 +45,164 @@ def _check_paqueteria_modulo(usuario: Usuario, db: Session):
         raise HTTPException(status_code=403, detail="El módulo de Paquetería no está activo para tu empresa")
 
 
+def _get_entorno_id(usuario: Usuario, entorno_id_param: Optional[int] = None) -> int:
+    """Obtener el entorno_id correcto según el usuario"""
+    if usuario.rol == "sysowner" and entorno_id_param:
+        return entorno_id_param
+    return usuario.entorno_trabajo_id
+
+
+def _sucursal_nombre(db: Session, sucursal_id: Optional[int]) -> Optional[str]:
+    """Obtener nombre de sucursal por ID (con cache ligero)"""
+    if not sucursal_id:
+        return None
+    suc = db.query(SucursalPaqueteria.nombre).filter(SucursalPaqueteria.id == sucursal_id).first()
+    return suc[0] if suc else None
+
+
+def _get_or_create_stock_sucursal(db: Session, tipo_caja_id: int, sucursal_id: int) -> StockCajaSucursal:
+    """Obtener o crear el registro de stock por sucursal para un tipo de caja"""
+    stock = db.query(StockCajaSucursal).filter(
+        StockCajaSucursal.tipo_caja_id == tipo_caja_id,
+        StockCajaSucursal.sucursal_paqueteria_id == sucursal_id,
+    ).first()
+    if not stock:
+        stock = StockCajaSucursal(
+            tipo_caja_id=tipo_caja_id,
+            sucursal_paqueteria_id=sucursal_id,
+            stock_actual=0,
+        )
+        db.add(stock)
+        db.flush()
+    return stock
+
+
+# ============== SUCURSALES CRUD ==============
+
+@router.get("/sucursales", response_model=list[SucursalPaqueteriaResponse])
+async def listar_sucursales(
+    entorno_id: Optional[int] = Query(None),
+    incluir_legacy: bool = Query(False, description="Incluir sucursal Legacy"),
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """Listar sucursales del entorno (oculta Legacy por defecto)"""
+    _check_paqueteria_modulo(usuario, db)
+    ent_id = _get_entorno_id(usuario, entorno_id)
+
+    query = db.query(SucursalPaqueteria).filter(
+        SucursalPaqueteria.entorno_trabajo_id == ent_id,
+        SucursalPaqueteria.activa == True,
+    )
+    if not incluir_legacy:
+        query = query.filter(SucursalPaqueteria.es_legacy == False)
+
+    return query.order_by(SucursalPaqueteria.nombre).all()
+
+
+@router.post("/sucursales", response_model=SucursalPaqueteriaResponse)
+async def crear_sucursal(
+    datos: SucursalPaqueteriaCreate,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """Crear una nueva sucursal (solo admin/owner/sysowner)"""
+    _check_paqueteria_modulo(usuario, db)
+    if usuario.rol not in ["admin", "owner", "sysowner"]:
+        raise HTTPException(status_code=403, detail="Solo administradores pueden crear sucursales")
+
+    ent_id = _get_entorno_id(usuario, datos.entorno_id)
+    if not ent_id:
+        raise HTTPException(status_code=400, detail="Selecciona una empresa")
+
+    # Verificar duplicado
+    existente = db.query(SucursalPaqueteria).filter(
+        SucursalPaqueteria.entorno_trabajo_id == ent_id,
+        func.upper(SucursalPaqueteria.nombre) == datos.nombre.strip().upper(),
+    ).first()
+    if existente:
+        raise HTTPException(status_code=409, detail=f"Ya existe una sucursal '{datos.nombre}'")
+
+    sucursal = SucursalPaqueteria(
+        entorno_trabajo_id=ent_id,
+        nombre=datos.nombre.strip(),
+        color_hex=datos.color_hex or "#3B82F6",
+    )
+    db.add(sucursal)
+    db.commit()
+    db.refresh(sucursal)
+
+    logger.info(f"Sucursal paquetería '{sucursal.nombre}' creada por {usuario.email}")
+    return sucursal
+
+
+@router.put("/sucursales/{sucursal_id}", response_model=SucursalPaqueteriaResponse)
+async def editar_sucursal(
+    sucursal_id: int,
+    datos: SucursalPaqueteriaUpdate,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """Editar una sucursal"""
+    _check_paqueteria_modulo(usuario, db)
+    if usuario.rol not in ["admin", "owner", "sysowner"]:
+        raise HTTPException(status_code=403, detail="Solo administradores pueden editar sucursales")
+
+    query = db.query(SucursalPaqueteria).filter(SucursalPaqueteria.id == sucursal_id)
+    if usuario.rol != "sysowner":
+        query = query.filter(SucursalPaqueteria.entorno_trabajo_id == usuario.entorno_trabajo_id)
+    sucursal = query.first()
+    if not sucursal:
+        raise HTTPException(status_code=404, detail="Sucursal no encontrada")
+    if sucursal.es_legacy:
+        raise HTTPException(status_code=400, detail="No se puede editar la sucursal Legacy")
+
+    if datos.nombre is not None:
+        sucursal.nombre = datos.nombre.strip()
+    if datos.color_hex is not None:
+        sucursal.color_hex = datos.color_hex
+    if datos.activa is not None:
+        sucursal.activa = datos.activa
+
+    db.commit()
+    db.refresh(sucursal)
+    logger.info(f"Sucursal paquetería {sucursal_id} editada por {usuario.email}")
+    return sucursal
+
+
+@router.delete("/sucursales/{sucursal_id}")
+async def borrar_sucursal(
+    sucursal_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """Borrar una sucursal (solo si no tiene registros)"""
+    _check_paqueteria_modulo(usuario, db)
+    if usuario.rol not in ["admin", "owner", "sysowner"]:
+        raise HTTPException(status_code=403, detail="Solo administradores pueden borrar sucursales")
+
+    query = db.query(SucursalPaqueteria).filter(SucursalPaqueteria.id == sucursal_id)
+    if usuario.rol != "sysowner":
+        query = query.filter(SucursalPaqueteria.entorno_trabajo_id == usuario.entorno_trabajo_id)
+    sucursal = query.first()
+    if not sucursal:
+        raise HTTPException(status_code=404, detail="Sucursal no encontrada")
+    if sucursal.es_legacy:
+        raise HTTPException(status_code=400, detail="No se puede borrar la sucursal Legacy")
+
+    # Verificar si tiene registros
+    tiene_registros = db.query(RegistroPaquete).filter(
+        RegistroPaquete.sucursal_paqueteria_id == sucursal_id
+    ).first()
+    if tiene_registros:
+        raise HTTPException(status_code=409, detail="No se puede borrar: la sucursal tiene registros. Desactívala en su lugar.")
+
+    db.delete(sucursal)
+    db.commit()
+    logger.info(f"Sucursal paquetería {sucursal_id} borrada por {usuario.email}")
+    return {"message": "Sucursal eliminada"}
+
+
 # ============== REGISTRAR (como fichaje) ==============
 
 @router.post("/registrar", response_model=RegistroPaqueteResponse)
@@ -58,18 +222,28 @@ async def registrar_paquete(
     if not id_pieza:
         raise HTTPException(status_code=400, detail="El ID de pieza no puede estar vacío")
 
-    entorno_id = usuario.entorno_trabajo_id
-    if not entorno_id and usuario.rol == "sysowner":
-        if datos.entorno_id:
-            entorno_id = datos.entorno_id
-        else:
-            raise HTTPException(status_code=400, detail="Selecciona una empresa antes de registrar")
+    entorno_id = _get_entorno_id(usuario, datos.entorno_id)
+    if not entorno_id:
+        raise HTTPException(status_code=400, detail="Selecciona una empresa antes de registrar")
+
+    # Validar sucursal_id si se proporciona
+    suc_id = datos.sucursal_id
+    if suc_id:
+        suc = db.query(SucursalPaqueteria).filter(
+            SucursalPaqueteria.id == suc_id,
+            SucursalPaqueteria.entorno_trabajo_id == entorno_id,
+            SucursalPaqueteria.activa == True,
+        ).first()
+        if not suc:
+            raise HTTPException(status_code=404, detail="Sucursal no encontrada o inactiva")
 
     registro = RegistroPaquete(
         usuario_id=usuario.id,
         entorno_trabajo_id=entorno_id,
         id_caja=id_caja,
         id_pieza=id_pieza,
+        sucursal_paqueteria_id=suc_id,
+        grupo_paquete=datos.grupo_paquete,
     )
     db.add(registro)
 
@@ -93,14 +267,20 @@ async def registrar_paquete(
                 cantidad=-1,
                 tipo_movimiento="consumo",
                 notas=f"Auto: pieza {id_pieza} empaquetada",
+                sucursal_paqueteria_id=suc_id,
             )
             db.add(mov)
+            # También descontar del stock por sucursal
+            if suc_id:
+                stock_suc = _get_or_create_stock_sucursal(db, tipo_caja.id, suc_id)
+                if stock_suc.stock_actual > 0:
+                    stock_suc.stock_actual -= 1
             logger.info(f"Stock caja '{tipo_caja.referencia_caja}' auto-restado: {stock_antes} → {stock_antes - 1}")
 
     db.commit()
     db.refresh(registro)
 
-    logger.info(f"Paquetería: {usuario.email} metió pieza {id_pieza} en caja {id_caja}")
+    logger.info(f"Paquetería: {usuario.email} metió pieza {id_pieza} en caja {id_caja} (sucursal={suc_id})")
 
     return RegistroPaqueteResponse(
         id=registro.id,
@@ -110,6 +290,9 @@ async def registrar_paquete(
         id_caja=registro.id_caja,
         id_pieza=registro.id_pieza,
         fecha_registro=registro.fecha_registro,
+        sucursal_id=registro.sucursal_paqueteria_id,
+        sucursal_nombre=_sucursal_nombre(db, registro.sucursal_paqueteria_id),
+        grupo_paquete=registro.grupo_paquete,
     )
 
 
@@ -119,6 +302,7 @@ async def registrar_paquete(
 async def ranking_paqueteria(
     fecha: Optional[str] = Query(None, description="Fecha YYYY-MM-DD (default hoy)"),
     entorno_id: Optional[int] = Query(None, description="ID entorno (solo sysowner)"),
+    sucursal_id: Optional[int] = Query(None, description="Filtrar por sucursal"),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_current_user),
 ):
@@ -138,10 +322,13 @@ async def ranking_paqueteria(
     ent_id = entorno_id if (usuario.rol == "sysowner" and entorno_id) else usuario.entorno_trabajo_id
 
     # Query agrupado por usuario
+    # COALESCE(grupo_paquete, CAST(id, TEXT)) para que registros sin grupo cuenten como individuales
+    grupo_expr = func.coalesce(RegistroPaquete.grupo_paquete, func.cast(RegistroPaquete.id, String))
     resultados_raw = (
         db.query(
             RegistroPaquete.usuario_id,
             func.count(RegistroPaquete.id).label("total"),
+            func.count(func.distinct(grupo_expr)).label("paquetes"),
             func.min(RegistroPaquete.fecha_registro).label("primera"),
             func.max(RegistroPaquete.fecha_registro).label("ultima"),
         )
@@ -150,12 +337,15 @@ async def ranking_paqueteria(
 
     if ent_id:
         resultados_raw = resultados_raw.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
+    if sucursal_id:
+        resultados_raw = resultados_raw.filter(RegistroPaquete.sucursal_paqueteria_id == sucursal_id)
 
     resultados_raw = resultados_raw.group_by(RegistroPaquete.usuario_id).all()
 
     # Construir ranking
     ranking = []
     total_general = 0
+    total_paquetes_general = 0
     for row in resultados_raw:
         usr = db.query(Usuario).filter(Usuario.id == row.usuario_id).first()
         if not usr:
@@ -165,18 +355,21 @@ async def ranking_paqueteria(
             usuario_email=usr.email,
             usuario_nombre=usr.nombre,
             total_registros=row.total,
+            total_paquetes=row.paquetes,
             primera=row.primera,
             ultima=row.ultima,
         ))
         total_general += row.total
+        total_paquetes_general += row.paquetes
 
-    # Ordenar por total descendente
-    ranking.sort(key=lambda x: x.total_registros, reverse=True)
+    # Ordenar por paquetes descendente
+    ranking.sort(key=lambda x: x.total_paquetes, reverse=True)
 
     return RankingResponse(
         fecha=fecha_filtro.isoformat(),
         usuarios=ranking,
         total_general=total_general,
+        total_paquetes=total_paquetes_general,
     )
 
 
@@ -185,6 +378,7 @@ async def ranking_paqueteria(
 @router.get("/mis-registros", response_model=list[MisRegistrosResponse])
 async def mis_registros(
     fecha: Optional[str] = Query(None, description="Fecha YYYY-MM-DD (default hoy)"),
+    sucursal_id: Optional[int] = Query(None, description="Filtrar por sucursal"),
     limite: int = Query(500, ge=1, le=5000),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_current_user),
@@ -200,16 +394,17 @@ async def mis_registros(
     else:
         fecha_filtro = date.today()
 
-    registros = (
+    query = (
         db.query(RegistroPaquete)
         .filter(
             RegistroPaquete.usuario_id == usuario.id,
             func.date(RegistroPaquete.fecha_registro) == fecha_filtro.strftime("%Y-%m-%d"),
         )
-        .order_by(desc(RegistroPaquete.fecha_registro))
-        .limit(limite)
-        .all()
     )
+    if sucursal_id:
+        query = query.filter(RegistroPaquete.sucursal_paqueteria_id == sucursal_id)
+
+    registros = query.order_by(desc(RegistroPaquete.fecha_registro)).limit(limite).all()
 
     return [
         MisRegistrosResponse(
@@ -219,6 +414,9 @@ async def mis_registros(
             fecha_registro=r.fecha_registro,
             usuario_email=usuario.email,
             usuario_nombre=usuario.nombre,
+            sucursal_id=r.sucursal_paqueteria_id,
+            sucursal_nombre=_sucursal_nombre(db, r.sucursal_paqueteria_id),
+            grupo_paquete=r.grupo_paquete,
         )
         for r in registros
     ]
@@ -231,6 +429,7 @@ async def detalle_usuario(
     usuario_id: int,
     fecha: Optional[str] = Query(None),
     entorno_id: Optional[int] = Query(None),
+    sucursal_id: Optional[int] = Query(None, description="Filtrar por sucursal"),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_current_user),
 ):
@@ -252,15 +451,17 @@ async def detalle_usuario(
     if not usr_target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
-    registros = (
+    query = (
         db.query(RegistroPaquete)
         .filter(
             RegistroPaquete.usuario_id == usuario_id,
             func.date(RegistroPaquete.fecha_registro) == fecha_filtro.strftime("%Y-%m-%d"),
         )
-        .order_by(desc(RegistroPaquete.fecha_registro))
-        .all()
     )
+    if sucursal_id:
+        query = query.filter(RegistroPaquete.sucursal_paqueteria_id == sucursal_id)
+
+    registros = query.order_by(desc(RegistroPaquete.fecha_registro)).all()
 
     return [
         MisRegistrosResponse(
@@ -270,6 +471,9 @@ async def detalle_usuario(
             fecha_registro=r.fecha_registro,
             usuario_email=usr_target.email,
             usuario_nombre=usr_target.nombre,
+            sucursal_id=r.sucursal_paqueteria_id,
+            sucursal_nombre=_sucursal_nombre(db, r.sucursal_paqueteria_id),
+            grupo_paquete=r.grupo_paquete,
         )
         for r in registros
     ]
@@ -281,6 +485,7 @@ async def detalle_usuario(
 async def todos_registros(
     fecha: Optional[str] = Query(None, description="Fecha YYYY-MM-DD (default hoy)"),
     entorno_id: Optional[int] = Query(None, description="ID entorno (solo sysowner)"),
+    sucursal_id: Optional[int] = Query(None, description="Filtrar por sucursal"),
     limite: int = Query(5000, ge=1, le=10000),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_current_user),
@@ -307,18 +512,28 @@ async def todos_registros(
     )
     if ent_id:
         query = query.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
+    if sucursal_id:
+        query = query.filter(RegistroPaquete.sucursal_paqueteria_id == sucursal_id)
 
     registros = query.order_by(desc(RegistroPaquete.fecha_registro)).limit(limite).all()
 
     resultado = []
-    # Cache de usuarios para no repetir queries
+    # Caches para no repetir queries
     cache_usuarios: dict[int, Usuario] = {}
+    cache_sucursales: dict[int, str] = {}
     for r in registros:
         if r.usuario_id not in cache_usuarios:
             usr = db.query(Usuario).filter(Usuario.id == r.usuario_id).first()
             if usr:
                 cache_usuarios[r.usuario_id] = usr
         usr = cache_usuarios.get(r.usuario_id)
+
+        suc_nombre = None
+        if r.sucursal_paqueteria_id:
+            if r.sucursal_paqueteria_id not in cache_sucursales:
+                cache_sucursales[r.sucursal_paqueteria_id] = _sucursal_nombre(db, r.sucursal_paqueteria_id) or ""
+            suc_nombre = cache_sucursales.get(r.sucursal_paqueteria_id)
+
         resultado.append(MisRegistrosResponse(
             id=r.id,
             id_caja=r.id_caja,
@@ -326,6 +541,9 @@ async def todos_registros(
             fecha_registro=r.fecha_registro,
             usuario_email=usr.email if usr else "desconocido",
             usuario_nombre=usr.nombre if usr else None,
+            sucursal_id=r.sucursal_paqueteria_id,
+            sucursal_nombre=suc_nombre,
+            grupo_paquete=r.grupo_paquete,
         ))
 
     return resultado
@@ -353,12 +571,13 @@ async def borrar_registro(
     if not es_admin and not (es_propio and es_de_hoy):
         raise HTTPException(status_code=403, detail="Solo puedes borrar tus registros del día actual")
 
-    if not es_admin and registro.entorno_trabajo_id != usuario.entorno_trabajo_id:
+    if usuario.rol != "sysowner" and registro.entorno_trabajo_id != usuario.entorno_trabajo_id:
         raise HTTPException(status_code=403, detail="No tienes acceso a este registro")
 
     # Auto-devolver stock de caja si existe un TipoCaja con esa referencia
     id_caja_borrada = registro.id_caja.upper() if registro.id_caja else None
     ent_borrada = registro.entorno_trabajo_id
+    suc_borrada = registro.sucursal_paqueteria_id
     if id_caja_borrada and ent_borrada:
         tipo_caja = (
             db.query(TipoCaja)
@@ -370,6 +589,10 @@ async def borrar_registro(
         )
         if tipo_caja:
             tipo_caja.stock_actual = (tipo_caja.stock_actual or 0) + 1
+            # Devolver al stock por sucursal
+            if suc_borrada:
+                stock_suc = _get_or_create_stock_sucursal(db, tipo_caja.id, suc_borrada)
+                stock_suc.stock_actual += 1
             mov = MovimientoCaja(
                 tipo_caja_id=tipo_caja.id,
                 entorno_trabajo_id=ent_borrada,
@@ -377,6 +600,7 @@ async def borrar_registro(
                 cantidad=1,
                 tipo_movimiento="ajuste",
                 notas=f"Auto: registro borrado (pieza {registro.id_pieza})",
+                sucursal_paqueteria_id=suc_borrada,
             )
             db.add(mov)
             logger.info(f"Stock caja '{tipo_caja.referencia_caja}' auto-devuelto +1 por borrado")
@@ -425,6 +649,7 @@ async def editar_registro(
 
     # Si cambió la caja, ajustar stock: devolver a la vieja, restar a la nueva
     if caja_nueva and caja_anterior and caja_nueva != caja_anterior and ent_reg:
+        suc_reg = registro.sucursal_paqueteria_id
         # Devolver 1 a la caja anterior
         tipo_ant = (
             db.query(TipoCaja)
@@ -433,9 +658,13 @@ async def editar_registro(
         )
         if tipo_ant:
             tipo_ant.stock_actual = (tipo_ant.stock_actual or 0) + 1
+            if suc_reg:
+                stock_suc_ant = _get_or_create_stock_sucursal(db, tipo_ant.id, suc_reg)
+                stock_suc_ant.stock_actual += 1
             db.add(MovimientoCaja(
                 tipo_caja_id=tipo_ant.id, entorno_trabajo_id=ent_reg, usuario_id=usuario.id,
                 cantidad=1, tipo_movimiento="ajuste", notas=f"Auto: edición, caja cambiada de {caja_anterior}",
+                sucursal_paqueteria_id=suc_reg,
             ))
         # Restar 1 a la caja nueva
         tipo_nue = (
@@ -445,9 +674,14 @@ async def editar_registro(
         )
         if tipo_nue and (tipo_nue.stock_actual or 0) > 0:
             tipo_nue.stock_actual = (tipo_nue.stock_actual or 0) - 1
+            if suc_reg:
+                stock_suc_nue = _get_or_create_stock_sucursal(db, tipo_nue.id, suc_reg)
+                if stock_suc_nue.stock_actual > 0:
+                    stock_suc_nue.stock_actual -= 1
             db.add(MovimientoCaja(
                 tipo_caja_id=tipo_nue.id, entorno_trabajo_id=ent_reg, usuario_id=usuario.id,
                 cantidad=-1, tipo_movimiento="consumo", notas=f"Auto: edición, caja cambiada a {caja_nueva}",
+                sucursal_paqueteria_id=suc_reg,
             ))
 
     db.commit()
@@ -464,6 +698,8 @@ async def editar_registro(
         id_caja=registro.id_caja,
         id_pieza=registro.id_pieza,
         fecha_registro=registro.fecha_registro,
+        sucursal_id=registro.sucursal_paqueteria_id,
+        sucursal_nombre=_sucursal_nombre(db, registro.sucursal_paqueteria_id),
     )
 
 
@@ -502,12 +738,9 @@ async def crear_tipo_caja(
     if usuario.rol not in ["admin", "owner", "sysowner"]:
         raise HTTPException(status_code=403, detail="Solo administradores pueden gestionar tipos de caja")
 
-    entorno_id = usuario.entorno_trabajo_id
-    if not entorno_id and usuario.rol == "sysowner":
-        if datos.entorno_id:
-            entorno_id = datos.entorno_id
-        else:
-            raise HTTPException(status_code=400, detail="Selecciona una empresa")
+    entorno_id = _get_entorno_id(usuario, datos.entorno_id)
+    if not entorno_id:
+        raise HTTPException(status_code=400, detail="Selecciona una empresa")
 
     ref = datos.referencia_caja.strip().upper()
 
@@ -547,7 +780,10 @@ async def editar_tipo_caja(
     if usuario.rol not in ["admin", "owner", "sysowner"]:
         raise HTTPException(status_code=403, detail="Solo administradores pueden gestionar tipos de caja")
 
-    tipo = db.query(TipoCaja).filter(TipoCaja.id == tipo_id).first()
+    query = db.query(TipoCaja).filter(TipoCaja.id == tipo_id)
+    if usuario.rol != "sysowner":
+        query = query.filter(TipoCaja.entorno_trabajo_id == usuario.entorno_trabajo_id)
+    tipo = query.first()
     if not tipo:
         raise HTTPException(status_code=404, detail="Tipo de caja no encontrado")
 
@@ -581,7 +817,10 @@ async def borrar_tipo_caja(
     if usuario.rol not in ["admin", "owner", "sysowner"]:
         raise HTTPException(status_code=403, detail="Solo administradores pueden gestionar tipos de caja")
 
-    tipo = db.query(TipoCaja).filter(TipoCaja.id == tipo_id).first()
+    query = db.query(TipoCaja).filter(TipoCaja.id == tipo_id)
+    if usuario.rol != "sysowner":
+        query = query.filter(TipoCaja.entorno_trabajo_id == usuario.entorno_trabajo_id)
+    tipo = query.first()
     if not tipo:
         raise HTTPException(status_code=404, detail="Tipo de caja no encontrado")
 
@@ -607,9 +846,23 @@ async def registrar_movimiento_caja(
     if usuario.rol not in ["admin", "owner", "sysowner"]:
         raise HTTPException(status_code=403, detail="Solo administradores pueden gestionar stock de cajas")
 
-    tipo = db.query(TipoCaja).filter(TipoCaja.id == tipo_id).first()
+    query = db.query(TipoCaja).filter(TipoCaja.id == tipo_id)
+    if usuario.rol != "sysowner":
+        query = query.filter(TipoCaja.entorno_trabajo_id == usuario.entorno_trabajo_id)
+    tipo = query.first()
     if not tipo:
         raise HTTPException(status_code=404, detail="Tipo de caja no encontrado")
+
+    # Validar sucursal si se proporcionó
+    suc_id = datos.sucursal_id
+    if suc_id:
+        suc = db.query(SucursalPaqueteria).filter(
+            SucursalPaqueteria.id == suc_id,
+            SucursalPaqueteria.entorno_trabajo_id == tipo.entorno_trabajo_id,
+            SucursalPaqueteria.activa == True,
+        ).first()
+        if not suc:
+            raise HTTPException(status_code=404, detail="Sucursal no encontrada o inactiva")
 
     # Aplicar cantidad según tipo
     cantidad = abs(datos.cantidad)
@@ -623,11 +876,19 @@ async def registrar_movimiento_caja(
         tipo.aviso_enviado = False
         logger.info(f"Aviso reseteado para caja '{tipo.referencia_caja}' tras nueva entrada")
 
-    # Actualizar stock
+    # Actualizar stock global
     nuevo_stock = (tipo.stock_actual or 0) + cantidad
     if nuevo_stock < 0:
         raise HTTPException(status_code=400, detail=f"Stock insuficiente. Stock actual: {tipo.stock_actual or 0}")
     tipo.stock_actual = nuevo_stock
+
+    # Actualizar stock por sucursal
+    if suc_id:
+        stock_suc = _get_or_create_stock_sucursal(db, tipo_id, suc_id)
+        nuevo_stock_suc = stock_suc.stock_actual + cantidad
+        if nuevo_stock_suc < 0:
+            raise HTTPException(status_code=400, detail=f"Stock insuficiente en sucursal. Stock: {stock_suc.stock_actual}")
+        stock_suc.stock_actual = nuevo_stock_suc
 
     # Crear registro de movimiento
     movimiento = MovimientoCaja(
@@ -637,12 +898,13 @@ async def registrar_movimiento_caja(
         cantidad=cantidad,
         tipo_movimiento=datos.tipo_movimiento,
         notas=datos.notas,
+        sucursal_paqueteria_id=suc_id,
     )
     db.add(movimiento)
     db.commit()
     db.refresh(movimiento)
 
-    logger.info(f"Movimiento caja tipo {tipo_id}: {datos.tipo_movimiento} x{cantidad} por {usuario.email}. Stock: {nuevo_stock}")
+    logger.info(f"Movimiento caja tipo {tipo_id}: {datos.tipo_movimiento} x{cantidad} por {usuario.email} (sucursal={suc_id}). Stock: {nuevo_stock}")
 
     return MovimientoCajaResponse(
         id=movimiento.id,
@@ -651,6 +913,8 @@ async def registrar_movimiento_caja(
         tipo_movimiento=movimiento.tipo_movimiento,
         notas=movimiento.notas,
         usuario_email=usuario.email,
+        sucursal_id=suc_id,
+        sucursal_nombre=_sucursal_nombre(db, suc_id),
         fecha=movimiento.fecha,
     )
 
@@ -660,10 +924,11 @@ async def listar_movimientos_caja(
     tipo_id: int,
     desde: Optional[str] = Query(None, description="Fecha inicio YYYY-MM-DD"),
     hasta: Optional[str] = Query(None, description="Fecha fin YYYY-MM-DD"),
+    sucursal_id: Optional[int] = Query(None, description="Filtrar por sucursal"),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_current_user),
 ):
-    """Listar historial de movimientos de un tipo de caja, con filtro de fechas"""
+    """Listar historial de movimientos de un tipo de caja, con filtro de fechas y sucursal"""
     _check_paqueteria_modulo(usuario, db)
 
     tipo = db.query(TipoCaja).filter(TipoCaja.id == tipo_id).first()
@@ -672,6 +937,8 @@ async def listar_movimientos_caja(
 
     query = db.query(MovimientoCaja).filter(MovimientoCaja.tipo_caja_id == tipo_id)
 
+    if sucursal_id:
+        query = query.filter(MovimientoCaja.sucursal_paqueteria_id == sucursal_id)
     if desde:
         query = query.filter(func.date(MovimientoCaja.fecha) >= desde)
     if hasta:
@@ -689,6 +956,8 @@ async def listar_movimientos_caja(
             tipo_movimiento=m.tipo_movimiento,
             notas=m.notas,
             usuario_email=usr.email if usr else None,
+            sucursal_id=m.sucursal_paqueteria_id,
+            sucursal_nombre=_sucursal_nombre(db, m.sucursal_paqueteria_id),
             fecha=m.fecha,
         ))
 
@@ -700,16 +969,18 @@ async def resumen_stock_cajas(
     desde: Optional[str] = Query(None, description="Fecha inicio YYYY-MM-DD para cálculo consumo"),
     hasta: Optional[str] = Query(None, description="Fecha fin YYYY-MM-DD para cálculo consumo"),
     entorno_id: Optional[int] = Query(None, description="ID del entorno (sysowner)"),
+    sucursal_id: Optional[int] = Query(None, description="Filtrar por sucursal"),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_current_user),
 ):
     """
     Resumen completo del stock de cajas:
-    - Stock actual de cada tipo
+    - Stock actual de cada tipo (global o por sucursal si se filtra)
     - Total entradas históricas
     - Total consumidas históricas
     - Consumo en el período seleccionado
     - Media diaria de consumo en el período
+    - Desglose de stock por sucursal
     """
     _check_paqueteria_modulo(usuario, db)
 
@@ -721,17 +992,29 @@ async def resumen_stock_cajas(
         TipoCaja.entorno_trabajo_id == ent_id
     ).all()
 
+    # Precargar sucursales para el desglose
+    sucursales_entorno = db.query(SucursalPaqueteria).filter(
+        SucursalPaqueteria.entorno_trabajo_id == ent_id,
+        SucursalPaqueteria.activa == True,
+        SucursalPaqueteria.es_legacy == False,
+    ).all()
+
     resultado = []
     for tipo in tipos:
+        # Base query for movements, filtered by sucursal if requested
+        mov_filter = [MovimientoCaja.tipo_caja_id == tipo.id]
+        if sucursal_id:
+            mov_filter.append(MovimientoCaja.sucursal_paqueteria_id == sucursal_id)
+
         # Total entradas históricas
         total_entradas = db.query(func.coalesce(func.sum(MovimientoCaja.cantidad), 0)).filter(
-            MovimientoCaja.tipo_caja_id == tipo.id,
+            *mov_filter,
             MovimientoCaja.cantidad > 0,
         ).scalar()
 
         # Total consumidas históricas (valor absoluto)
         total_consumidas = db.query(func.coalesce(func.sum(func.abs(MovimientoCaja.cantidad)), 0)).filter(
-            MovimientoCaja.tipo_caja_id == tipo.id,
+            *mov_filter,
             MovimientoCaja.cantidad < 0,
         ).scalar()
 
@@ -740,7 +1023,7 @@ async def resumen_stock_cajas(
         media_diaria = 0.0
         if desde or hasta:
             q = db.query(func.coalesce(func.sum(func.abs(MovimientoCaja.cantidad)), 0)).filter(
-                MovimientoCaja.tipo_caja_id == tipo.id,
+                *mov_filter,
                 MovimientoCaja.cantidad < 0,
             )
             if desde:
@@ -761,7 +1044,7 @@ async def resumen_stock_cajas(
         else:
             # Sin filtro: calcular media desde el primer movimiento
             primer_mov = db.query(func.min(MovimientoCaja.fecha)).filter(
-                MovimientoCaja.tipo_caja_id == tipo.id,
+                *mov_filter,
                 MovimientoCaja.cantidad < 0,
             ).scalar()
             if primer_mov and total_consumidas > 0:
@@ -769,19 +1052,46 @@ async def resumen_stock_cajas(
                 media_diaria = round(total_consumidas / dias, 2)
             consumo_periodo = total_consumidas
 
+        # Determinar stock a mostrar
+        if sucursal_id:
+            # Mostrar stock de esa sucursal específica
+            stock_suc = db.query(StockCajaSucursal).filter(
+                StockCajaSucursal.tipo_caja_id == tipo.id,
+                StockCajaSucursal.sucursal_paqueteria_id == sucursal_id,
+            ).first()
+            stock_mostrar = stock_suc.stock_actual if stock_suc else 0
+        else:
+            stock_mostrar = tipo.stock_actual or 0
+
+        # Desglose de stock por sucursal
+        stock_por_sucursal = []
+        if not sucursal_id and sucursales_entorno:
+            for suc in sucursales_entorno:
+                stock_suc = db.query(StockCajaSucursal).filter(
+                    StockCajaSucursal.tipo_caja_id == tipo.id,
+                    StockCajaSucursal.sucursal_paqueteria_id == suc.id,
+                ).first()
+                stock_por_sucursal.append(StockSucursalInfo(
+                    sucursal_id=suc.id,
+                    sucursal_nombre=suc.nombre,
+                    color_hex=suc.color_hex or "#3B82F6",
+                    stock_actual=stock_suc.stock_actual if stock_suc else 0,
+                ))
+
         resultado.append(ResumenTipoCaja(
             id=tipo.id,
             referencia_caja=tipo.referencia_caja,
             tipo_nombre=tipo.tipo_nombre,
             descripcion=tipo.descripcion,
-            stock_actual=tipo.stock_actual or 0,
+            stock_actual=stock_mostrar,
             total_entradas=total_entradas,
             total_consumidas=total_consumidas,
             consumo_periodo=consumo_periodo,
             media_diaria=media_diaria,
-            dias_restantes=int((tipo.stock_actual or 0) / media_diaria) if media_diaria > 0 else None,
+            dias_restantes=int(stock_mostrar / media_diaria) if media_diaria > 0 else None,
             dias_aviso=tipo.dias_aviso,
             alerta_stock=False,  # se calcula abajo
+            stock_por_sucursal=stock_por_sucursal,
         ))
 
     # Verificar alertas de stock bajo y marcar aviso_enviado
@@ -803,10 +1113,11 @@ async def resumen_stock_cajas(
 async def establecer_stock(
     tipo_id: int,
     stock: int = Query(..., description="Nuevo stock actual"),
+    sucursal_id: Optional[int] = Query(None, description="Sucursal (si aplica)"),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_current_user),
 ):
-    """Establecer el stock actual directamente (ajuste completo)"""
+    """Establecer el stock actual directamente (ajuste completo). Si sucursal_id, ajusta esa sucursal."""
     _check_paqueteria_modulo(usuario, db)
 
     if usuario.rol not in ["admin", "owner", "sysowner"]:
@@ -816,8 +1127,17 @@ async def establecer_stock(
     if not tipo:
         raise HTTPException(status_code=404, detail="Tipo de caja no encontrado")
 
-    diferencia = stock - (tipo.stock_actual or 0)
-    tipo.stock_actual = stock
+    if sucursal_id:
+        # Ajustar stock de sucursal específica
+        stock_suc = _get_or_create_stock_sucursal(db, tipo_id, sucursal_id)
+        diferencia_suc = stock - stock_suc.stock_actual
+        stock_suc.stock_actual = stock
+        # También ajustar el global
+        tipo.stock_actual = (tipo.stock_actual or 0) + diferencia_suc
+        diferencia = diferencia_suc
+    else:
+        diferencia = stock - (tipo.stock_actual or 0)
+        tipo.stock_actual = stock
 
     # Registrar el ajuste como movimiento
     if diferencia != 0:
@@ -827,14 +1147,15 @@ async def establecer_stock(
             usuario_id=usuario.id,
             cantidad=diferencia,
             tipo_movimiento="ajuste",
-            notas=f"Stock ajustado a {stock}",
+            notas=f"Stock ajustado a {stock}" + (f" (sucursal {sucursal_id})" if sucursal_id else ""),
+            sucursal_paqueteria_id=sucursal_id,
         )
         db.add(movimiento)
 
     db.commit()
     db.refresh(tipo)
 
-    logger.info(f"Stock de caja {tipo_id} ajustado a {stock} por {usuario.email}")
+    logger.info(f"Stock de caja {tipo_id} ajustado a {stock} por {usuario.email} (sucursal={sucursal_id})")
     return {"message": f"Stock actualizado a {stock}", "stock_actual": tipo.stock_actual}
 
 
@@ -848,66 +1169,65 @@ DIAS_SEMANA_ES = {
 @router.get("/estadisticas", response_model=EstadisticasPaqueteriaResponse)
 async def estadisticas_paqueteria(
     entorno_id: Optional[int] = Query(None, description="ID entorno (solo sysowner)"),
+    sucursal_id: Optional[int] = Query(None, description="Filtrar por sucursal (None = General)"),
     db: Session = Depends(get_db),
     usuario: Usuario = Depends(get_current_user),
 ):
-    """Estadísticas generales de paquetería: totales, promedios, gráfica, rankings"""
+    """Estadísticas generales de paquetería: totales, promedios, gráfica, rankings.
+    Si sucursal_id=None, devuelve estadísticas globales + desglose por sucursal."""
     _check_paqueteria_modulo(usuario, db)
 
     ent_id = entorno_id if (usuario.rol == "sysowner" and entorno_id) else usuario.entorno_trabajo_id
 
     hoy = date.today()
-    inicio_semana = hoy - timedelta(days=hoy.weekday())  # Lunes
+    inicio_semana = hoy - timedelta(days=hoy.weekday())
     inicio_mes = hoy.replace(day=1)
 
-    # Base query
-    base_q = db.query(RegistroPaquete)
-    if ent_id:
-        base_q = base_q.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
+    # Expresión para contar piezas (paquetes distintos), no materiales individuales
+    grupo_expr_est = func.coalesce(RegistroPaquete.grupo_paquete, func.cast(RegistroPaquete.id, String))
 
-    # Total hoy
-    total_hoy = base_q.filter(
-        func.date(RegistroPaquete.fecha_registro) == hoy.strftime("%Y-%m-%d")
-    ).count()
+    def _count_piezas(*extra_filters):
+        q = db.query(func.count(func.distinct(grupo_expr_est)))
+        if ent_id:
+            q = q.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
+        if sucursal_id:
+            q = q.filter(RegistroPaquete.sucursal_paqueteria_id == sucursal_id)
+        for f in extra_filters:
+            q = q.filter(f)
+        return q.scalar() or 0
 
-    # Total semana
-    total_semana = base_q.filter(
-        func.date(RegistroPaquete.fecha_registro) >= inicio_semana.strftime("%Y-%m-%d")
-    ).count()
-
-    # Total mes
-    total_mes = base_q.filter(
-        func.date(RegistroPaquete.fecha_registro) >= inicio_mes.strftime("%Y-%m-%d")
-    ).count()
-
-    # Total histórico
-    total_historico = base_q.count()
+    total_hoy = _count_piezas(func.date(RegistroPaquete.fecha_registro) == hoy.strftime("%Y-%m-%d"))
+    total_semana = _count_piezas(func.date(RegistroPaquete.fecha_registro) >= inicio_semana.strftime("%Y-%m-%d"))
+    total_mes = _count_piezas(func.date(RegistroPaquete.fecha_registro) >= inicio_mes.strftime("%Y-%m-%d"))
+    total_historico = _count_piezas()
 
     # Días trabajados y promedio diario (últimos 30 días)
     hace_30 = hoy - timedelta(days=30)
-    dias_con_registros = (
+    dias_con_registros_q = (
         db.query(func.date(RegistroPaquete.fecha_registro))
         .filter(func.date(RegistroPaquete.fecha_registro) >= hace_30.strftime("%Y-%m-%d"))
     )
     if ent_id:
-        dias_con_registros = dias_con_registros.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
-    dias_con_registros = dias_con_registros.group_by(func.date(RegistroPaquete.fecha_registro)).all()
+        dias_con_registros_q = dias_con_registros_q.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
+    if sucursal_id:
+        dias_con_registros_q = dias_con_registros_q.filter(RegistroPaquete.sucursal_paqueteria_id == sucursal_id)
+    dias_con_registros = dias_con_registros_q.group_by(func.date(RegistroPaquete.fecha_registro)).all()
     dias_trabajados = len(dias_con_registros)
     
-    total_30_dias = base_q.filter(
-        func.date(RegistroPaquete.fecha_registro) >= hace_30.strftime("%Y-%m-%d")
-    ).count()
+    total_30_dias = _count_piezas(func.date(RegistroPaquete.fecha_registro) >= hace_30.strftime("%Y-%m-%d"))
     promedio_diario = round(total_30_dias / dias_trabajados, 1) if dias_trabajados > 0 else 0.0
 
-    # Mejor día (de todos los tiempos)
+    # Mejor día (de todos los tiempos) - contar piezas, no materiales
     mejor_dia_q = (
         db.query(
             func.date(RegistroPaquete.fecha_registro).label("fecha"),
-            func.count(RegistroPaquete.id).label("total"),
+            func.count(func.distinct(grupo_expr_est)).label("total"),
         )
     )
     if ent_id:
         mejor_dia_q = mejor_dia_q.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
+    if sucursal_id:
+        mejor_dia_q = mejor_dia_q.filter(RegistroPaquete.sucursal_paqueteria_id == sucursal_id)
     mejor_dia_q = (
         mejor_dia_q.group_by(func.date(RegistroPaquete.fecha_registro))
         .order_by(desc("total"))
@@ -920,30 +1240,34 @@ async def estadisticas_paqueteria(
     ultimos_dias = []
     for i in range(6, -1, -1):
         dia = hoy - timedelta(days=i)
-        total_dia = (
-            db.query(func.count(RegistroPaquete.id))
+        total_dia_q = (
+            db.query(func.count(func.distinct(grupo_expr_est)))
             .filter(func.date(RegistroPaquete.fecha_registro) == dia.strftime("%Y-%m-%d"))
         )
         if ent_id:
-            total_dia = total_dia.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
-        total_dia = total_dia.scalar() or 0
+            total_dia_q = total_dia_q.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
+        if sucursal_id:
+            total_dia_q = total_dia_q.filter(RegistroPaquete.sucursal_paqueteria_id == sucursal_id)
+        total_dia = total_dia_q.scalar() or 0
         ultimos_dias.append(EstadisticasDia(
             fecha=dia.strftime("%Y-%m-%d"),
             dia_semana=DIAS_SEMANA_ES.get(dia.weekday(), ""),
             total=total_dia,
         ))
 
-    # Ranking usuarios del mes
-    usuarios_mes = (
+    # Ranking usuarios del mes (contar piezas = paquetes, no materiales individuales)
+    usuarios_mes_q = (
         db.query(
             RegistroPaquete.usuario_id,
-            func.count(RegistroPaquete.id).label("total"),
+            func.count(func.distinct(grupo_expr_est)).label("total"),
         )
         .filter(func.date(RegistroPaquete.fecha_registro) >= inicio_mes.strftime("%Y-%m-%d"))
     )
     if ent_id:
-        usuarios_mes = usuarios_mes.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
-    usuarios_mes = usuarios_mes.group_by(RegistroPaquete.usuario_id).order_by(desc("total")).all()
+        usuarios_mes_q = usuarios_mes_q.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
+    if sucursal_id:
+        usuarios_mes_q = usuarios_mes_q.filter(RegistroPaquete.sucursal_paqueteria_id == sucursal_id)
+    usuarios_mes = usuarios_mes_q.group_by(RegistroPaquete.usuario_id).order_by(desc("total")).all()
 
     usuarios_stats = []
     for row in usuarios_mes:
@@ -958,21 +1282,22 @@ async def estadisticas_paqueteria(
             porcentaje=round((row.total / total_mes) * 100, 1) if total_mes > 0 else 0.0,
         ))
 
-    # Cajas más usadas del mes
-    cajas_mes = (
+    # Cajas más usadas del mes (contar piezas/paquetes distintos)
+    cajas_mes_q = (
         db.query(
             func.upper(RegistroPaquete.id_caja).label("id_caja"),
-            func.count(RegistroPaquete.id).label("total"),
+            func.count(func.distinct(grupo_expr_est)).label("total"),
         )
         .filter(func.date(RegistroPaquete.fecha_registro) >= inicio_mes.strftime("%Y-%m-%d"))
     )
     if ent_id:
-        cajas_mes = cajas_mes.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
-    cajas_mes = cajas_mes.group_by(func.upper(RegistroPaquete.id_caja)).order_by(desc("total")).limit(10).all()
+        cajas_mes_q = cajas_mes_q.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
+    if sucursal_id:
+        cajas_mes_q = cajas_mes_q.filter(RegistroPaquete.sucursal_paqueteria_id == sucursal_id)
+    cajas_mes = cajas_mes_q.group_by(func.upper(RegistroPaquete.id_caja)).order_by(desc("total")).limit(10).all()
 
     cajas_stats = []
     for row in cajas_mes:
-        # Buscar tipo de caja asociado
         tipo = db.query(TipoCaja).filter(
             func.upper(TipoCaja.referencia_caja) == row.id_caja
         )
@@ -987,6 +1312,38 @@ async def estadisticas_paqueteria(
             porcentaje=round((row.total / total_mes) * 100, 1) if total_mes > 0 else 0.0,
         ))
 
+    # Desglose por sucursal (solo en vista General, sin filtro de sucursal)
+    por_sucursal: list[EstadisticasSucursal] = []
+    if not sucursal_id and ent_id:
+        sucursales = db.query(SucursalPaqueteria).filter(
+            SucursalPaqueteria.entorno_trabajo_id == ent_id,
+            SucursalPaqueteria.activa == True,
+        ).all()
+        for suc in sucursales:
+            suc_total_hoy = (
+                db.query(func.count(func.distinct(grupo_expr_est)))
+                .filter(
+                    RegistroPaquete.entorno_trabajo_id == ent_id,
+                    RegistroPaquete.sucursal_paqueteria_id == suc.id,
+                    func.date(RegistroPaquete.fecha_registro) == hoy.strftime("%Y-%m-%d"),
+                ).scalar() or 0
+            )
+            suc_total_mes = (
+                db.query(func.count(func.distinct(grupo_expr_est)))
+                .filter(
+                    RegistroPaquete.entorno_trabajo_id == ent_id,
+                    RegistroPaquete.sucursal_paqueteria_id == suc.id,
+                    func.date(RegistroPaquete.fecha_registro) >= inicio_mes.strftime("%Y-%m-%d"),
+                ).scalar() or 0
+            )
+            por_sucursal.append(EstadisticasSucursal(
+                sucursal_id=suc.id,
+                sucursal_nombre=suc.nombre,
+                color_hex=suc.color_hex or "#3B82F6",
+                total_hoy=suc_total_hoy,
+                total_mes=suc_total_mes,
+            ))
+
     return EstadisticasPaqueteriaResponse(
         total_hoy=total_hoy,
         total_semana=total_semana,
@@ -999,4 +1356,5 @@ async def estadisticas_paqueteria(
         ultimos_dias=ultimos_dias,
         usuarios=usuarios_stats,
         cajas_top=cajas_stats,
+        por_sucursal=por_sucursal,
     )

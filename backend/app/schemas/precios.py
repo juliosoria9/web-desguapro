@@ -69,6 +69,9 @@ class BuscarPreciosResponse(BaseModel):
     tipo_pieza: Optional[str] = None  # Nombre del artículo desde el scraper
     referencias_iam: Optional[List[str]] = None  # Referencias equivalentes IAM
     referencias_iam_texto: Optional[str] = None  # Referencias IAM separadas por coma
+    # OEM equivalentes filtradas por relevancia (eBay)
+    oem_equivalentes: Optional[List[Dict[str, Any]]] = None
+    oem_equivalentes_texto: Optional[str] = None
     # Nuevos campos para multi-plataforma
     resultados_por_plataforma: Optional[List[PlataformaResultado]] = None
     plataformas_consultadas: int = 0
@@ -87,3 +90,54 @@ class CargaArchivoResponse(BaseModel):
     precios_encontrados: int
     resumen: PrecioResumen
     detalles: Dict[str, Any] = {}
+
+
+# ─── Búsqueda completa (venta) ────────────────────────────
+
+class BusquedaCompletaRequest(BaseModel):
+    referencia: str = Field(..., min_length=1, max_length=100)
+
+
+class PiezaDesguaceResult(BaseModel):
+    id: str
+    titulo: str = ""
+    oem: str = ""
+    vehiculo: str = ""
+    precio: Optional[float] = None
+    precio_texto: str = ""
+    url: str = ""
+    imagen: str = ""
+    desguace: str = ""
+    desguace_id: str = ""
+
+
+class PiezaStockResult(BaseModel):
+    id: int
+    refid: Optional[str] = None
+    oem: Optional[str] = None
+    articulo: Optional[str] = None
+    marca: Optional[str] = None
+    modelo: Optional[str] = None
+    precio: Optional[float] = None
+    precio_texto: str = ""
+    ubicacion: Optional[str] = None
+    imagen: str = ""
+    fuente: str = "motocoche"
+    fuente_nombre: str = "Tu Stock"
+
+
+class BusquedaCompletaResponse(BaseModel):
+    referencia_original: str
+    oem_equivalentes: List[str] = []
+    stock_propio: List[Dict[str, Any]] = []
+    stock_otros_entornos: List[Dict[str, Any]] = []
+    piezas_vendidas: List[Dict[str, Any]] = []
+    piezas_nuevas_iam: List[Dict[str, Any]] = []
+    resultados_desguaces: List[Dict[str, Any]] = []
+    errores: Dict[str, str] = {}
+    total_stock: int = 0
+    total_otros_entornos: int = 0
+    total_desguaces: int = 0
+    total_oem: int = 0
+    total_iam: int = 0
+    desguaces_disponibles: Dict[str, str] = {}

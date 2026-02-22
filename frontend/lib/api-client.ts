@@ -11,6 +11,17 @@ const apiClient: AxiosInstance = axios.create({
   withCredentials: true,
 });
 
+// Interceptor para añadir Authorization header desde localStorage
+apiClient.interceptors.request.use((config) => {
+  if (typeof window !== 'undefined') {
+    const token = localStorage.getItem('token');
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+  }
+  return config;
+});
+
 // Interceptor para manejar errores y redirección en 401
 apiClient.interceptors.response.use(
   (response) => response,

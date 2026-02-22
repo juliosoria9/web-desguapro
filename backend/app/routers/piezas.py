@@ -1,5 +1,5 @@
-"""
-Router para gestión y verificación de piezas
+﻿"""
+Router para gestiÃ³n y verificaciÃ³n de piezas
 """
 from typing import List, Optional
 from fastapi import APIRouter, HTTPException, Depends, status, UploadFile, File, Form
@@ -15,9 +15,8 @@ import os
 import json
 
 from app.database import get_db
-from app.models.busqueda import PiezaDesguace, BaseDesguace, CSVGuardado, PiezaPedida, PiezaVendida
+from app.models.busqueda import PiezaDesguace, BaseDesguace, CSVGuardado, PiezaPedida, PiezaVendida, Usuario
 from app.dependencies import get_current_user
-from utils.security import TokenData
 from utils.timezone import now_spain_naive
 
 logger = logging.getLogger(__name__)
@@ -95,10 +94,10 @@ class PiezaResponse(BaseModel):
 @router.post("/nuevas")
 async def crear_piezas_nuevas(
     request: PiezasNuevasRequest,
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Crear una o más piezas nuevas en el inventario"""
+    """Crear una o mÃ¡s piezas nuevas en el inventario"""
     try:
         if not current_user.entorno_trabajo_id:
             raise HTTPException(
@@ -153,12 +152,12 @@ async def crear_piezas_nuevas(
         
         db.commit()
         
-        logger.info(f"Usuario {current_user.email} añadió {piezas_insertadas} piezas nuevas")
+        logger.info(f"Usuario {current_user.email} aÃ±adiÃ³ {piezas_insertadas} piezas nuevas")
         
         return {
             "success": True,
             "insertadas": piezas_insertadas,
-            "message": f"Se han añadido {piezas_insertadas} pieza(s) al inventario"
+            "message": f"Se han aÃ±adido {piezas_insertadas} pieza(s) al inventario"
         }
         
     except HTTPException:
@@ -175,10 +174,10 @@ async def crear_piezas_nuevas(
 @router.get("/recientes")
 async def obtener_piezas_recientes(
     limit: int = 20,
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Obtener las últimas piezas añadidas al inventario"""
+    """Obtener las Ãºltimas piezas aÃ±adidas al inventario"""
     try:
         if not current_user.entorno_trabajo_id:
             return {"piezas": []}
@@ -191,7 +190,7 @@ async def obtener_piezas_recientes(
         if not base_desguace:
             return {"piezas": []}
         
-        # Obtener las últimas piezas
+        # Obtener las Ãºltimas piezas
         piezas = db.query(PiezaDesguace).filter(
             PiezaDesguace.base_desguace_id == base_desguace.id
         ).order_by(
@@ -227,7 +226,7 @@ async def obtener_piezas_recientes(
 @router.delete("/{pieza_id}")
 async def eliminar_pieza(
     pieza_id: int,
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Eliminar una pieza del inventario"""
@@ -253,7 +252,7 @@ async def eliminar_pieza(
         db.delete(pieza)
         db.commit()
         
-        logger.info(f"Usuario {current_user.email} eliminó pieza {pieza_id}")
+        logger.info(f"Usuario {current_user.email} eliminÃ³ pieza {pieza_id}")
         
         return {"success": True, "message": "Pieza eliminada correctamente"}
         
@@ -273,7 +272,7 @@ async def verificar_piezas_csv(
     archivo: UploadFile = File(...),
     umbral_compra: int = Form(30),
     guardar: str = Form("false"),
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -315,7 +314,7 @@ async def verificar_piezas_csv(
                     usuario_id=current_user.id,
                     nombre=nombre_archivo,
                     ruta_archivo=ruta_guardado,
-                    total_piezas=0,  # Se actualiza después
+                    total_piezas=0,  # Se actualiza despuÃ©s
                     fecha_subida=now_spain_naive()
                 )
                 db.add(csv_guardado)
@@ -368,14 +367,14 @@ async def verificar_piezas_csv(
                         'imagen': imagen
                     })
         
-        # Actualizar total_piezas si se guardó
+        # Actualizar total_piezas si se guardÃ³
         if guardar.lower() == "true" and 'csv_guardado' in locals():
             csv_guardado.total_piezas = len(piezas_a_verificar)
         
         if not piezas_a_verificar:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No se encontraron referencias válidas en el archivo"
+                detail="No se encontraron referencias vÃ¡lidas en el archivo"
             )
         
         # Obtener base de desguace del entorno
@@ -383,16 +382,16 @@ async def verificar_piezas_csv(
             BaseDesguace.entorno_trabajo_id == current_user.entorno_trabajo_id
         ).first()
         
-        # Optimización: crear un set de referencias para búsqueda rápida
+        # OptimizaciÃ³n: crear un set de referencias para bÃºsqueda rÃ¡pida
         todas_refs = set(item['referencia'] for item in piezas_a_verificar)
-        # También buscar por OE e IAM del CSV
+        # TambiÃ©n buscar por OE e IAM del CSV
         for item in piezas_a_verificar:
             if item.get('oe'):
                 todas_refs.add(item['oe'])
             if item.get('iam'):
                 todas_refs.add(item['iam'])
         
-        # Una sola consulta para todas las piezas del inventario (incluir fecha_creacion para última compra)
+        # Una sola consulta para todas las piezas del inventario (incluir fecha_creacion para Ãºltima compra)
         piezas_stock = {}
         if base_desguace:
             piezas_db = db.query(
@@ -417,7 +416,7 @@ async def verificar_piezas_csv(
                             piezas_stock[campo] = []
                         piezas_stock[campo].append(pieza)
         
-        # Consultar historial de ventas por OEM para calcular rotación
+        # Consultar historial de ventas por OEM para calcular rotaciÃ³n
         ventas_por_oem = {}
         if current_user.entorno_trabajo_id:
             ventas_db = db.query(
@@ -470,7 +469,7 @@ async def verificar_piezas_csv(
                 if necesita_comprar:
                     a_comprar += 1
                 
-                # Calcular última compra (fecha más reciente de stock)
+                # Calcular Ãºltima compra (fecha mÃ¡s reciente de stock)
                 ultima_compra = None
                 fechas_compra = [p.fecha_creacion for p in piezas_encontradas if p.fecha_creacion]
                 if fechas_compra:
@@ -480,7 +479,7 @@ async def verificar_piezas_csv(
                 ventas = ventas_por_oem.get(ref, [])
                 ultima_venta = ventas[0]['fecha_venta'].isoformat() if ventas and ventas[0]['fecha_venta'] else None
                 
-                # Calcular rotación promedio (días entre fichaje/compra y venta)
+                # Calcular rotaciÃ³n promedio (dÃ­as entre fichaje/compra y venta)
                 rotacion_dias = None
                 if ventas:
                     dias_totales = []
@@ -518,7 +517,7 @@ async def verificar_piezas_csv(
                 # No encontrada en inventario = NECESITA COMPRAR toda la cantidad
                 a_comprar += 1
                 
-                # También obtener ventas para piezas no en stock
+                # TambiÃ©n obtener ventas para piezas no en stock
                 ventas = ventas_por_oem.get(ref, [])
                 ultima_venta = ventas[0]['fecha_venta'].isoformat() if ventas and ventas[0]['fecha_venta'] else None
                 rotacion_dias = None
@@ -556,7 +555,7 @@ async def verificar_piezas_csv(
                 })
         
         db.commit()
-        logger.info(f"Usuario {current_user.email} verificó {len(piezas_a_verificar)} piezas: {encontradas} encontradas, {a_comprar} para comprar")
+        logger.info(f"Usuario {current_user.email} verificÃ³ {len(piezas_a_verificar)} piezas: {encontradas} encontradas, {a_comprar} para comprar")
         
         return {
             "success": True,
@@ -589,7 +588,7 @@ class VerificarGuardadoRequest(BaseModel):
 async def verificar_csv_guardado(
     csv_id: int,
     request: VerificarGuardadoRequest,
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """
@@ -686,7 +685,7 @@ async def verificar_csv_guardado(
         if not piezas_a_verificar:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
-                detail="No se encontraron referencias válidas en el archivo"
+                detail="No se encontraron referencias vÃ¡lidas en el archivo"
             )
         
         # Obtener base de desguace del entorno (usando entorno_id que ya considera sysowner)
@@ -694,7 +693,7 @@ async def verificar_csv_guardado(
             BaseDesguace.entorno_trabajo_id == entorno_id
         ).first()
         
-        # Crear set de referencias para búsqueda
+        # Crear set de referencias para bÃºsqueda
         todas_refs = set(item['referencia'] for item in piezas_a_verificar)
         for item in piezas_a_verificar:
             if item.get('oe'):
@@ -726,7 +725,7 @@ async def verificar_csv_guardado(
                             piezas_stock[campo] = []
                         piezas_stock[campo].append(pieza)
         
-        # Consultar historial de ventas por OEM para calcular rotación
+        # Consultar historial de ventas por OEM para calcular rotaciÃ³n
         ventas_por_oem = {}
         ventas_db = db.query(
             PiezaVendida.oem,
@@ -777,7 +776,7 @@ async def verificar_csv_guardado(
                 if necesita_comprar:
                     a_comprar += 1
                 
-                # Calcular última compra (fecha más reciente de stock)
+                # Calcular Ãºltima compra (fecha mÃ¡s reciente de stock)
                 ultima_compra = None
                 fechas_compra = [p.fecha_creacion for p in piezas_encontradas if p.fecha_creacion]
                 if fechas_compra:
@@ -787,7 +786,7 @@ async def verificar_csv_guardado(
                 ventas = ventas_por_oem.get(ref, [])
                 ultima_venta = ventas[0]['fecha_venta'].isoformat() if ventas and ventas[0]['fecha_venta'] else None
                 
-                # Calcular rotación promedio (días entre fichaje/compra y venta)
+                # Calcular rotaciÃ³n promedio (dÃ­as entre fichaje/compra y venta)
                 rotacion_dias = None
                 if ventas:
                     dias_totales = []
@@ -824,7 +823,7 @@ async def verificar_csv_guardado(
             else:
                 a_comprar += 1
                 
-                # También obtener ventas para piezas no en stock
+                # TambiÃ©n obtener ventas para piezas no en stock
                 ventas = ventas_por_oem.get(ref, [])
                 ultima_venta = ventas[0]['fecha_venta'].isoformat() if ventas and ventas[0]['fecha_venta'] else None
                 rotacion_dias = None
@@ -861,7 +860,7 @@ async def verificar_csv_guardado(
                     'ventas_totales': len(ventas),
                 })
         
-        logger.info(f"Usuario {current_user.email} verificó CSV guardado {csv_id}: {encontradas} encontradas, {a_comprar} para comprar")
+        logger.info(f"Usuario {current_user.email} verificÃ³ CSV guardado {csv_id}: {encontradas} encontradas, {a_comprar} para comprar")
         
         return {
             "success": True,
@@ -888,7 +887,7 @@ async def verificar_csv_guardado(
 @router.get("/csv-guardados")
 async def listar_csv_guardados(
     entorno_id: Optional[int] = None,
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Listar todos los CSVs guardados. Sysowner ve todos los CSVs de todos los entornos."""
@@ -930,7 +929,7 @@ async def listar_csv_guardados(
 @router.get("/csv-guardados/{csv_id}")
 async def descargar_csv(
     csv_id: int,
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Descargar un CSV guardado"""
@@ -962,10 +961,10 @@ async def descargar_csv(
 @router.get("/csv-guardados/{csv_id}/contenido")
 async def obtener_contenido_csv(
     csv_id: int,
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """Obtener el contenido del CSV para edición"""
+    """Obtener el contenido del CSV para ediciÃ³n"""
     try:
         csv_guardado = db.query(CSVGuardado).filter(
             CSVGuardado.id == csv_id,
@@ -1049,7 +1048,7 @@ class ActualizarCSVRequest(BaseModel):
 async def actualizar_csv(
     csv_id: int,
     request: ActualizarCSVRequest,
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Actualizar el contenido completo del CSV"""
@@ -1078,7 +1077,7 @@ async def actualizar_csv(
         csv_guardado.total_piezas = len(request.piezas)
         db.commit()
         
-        logger.info(f"Usuario {current_user.email} actualizó CSV {csv_id} con {len(request.piezas)} piezas")
+        logger.info(f"Usuario {current_user.email} actualizÃ³ CSV {csv_id} con {len(request.piezas)} piezas")
         
         return {
             "success": True,
@@ -1096,7 +1095,7 @@ async def actualizar_csv(
 @router.delete("/csv-guardados/{csv_id}")
 async def eliminar_csv(
     csv_id: int,
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Eliminar un CSV guardado"""
@@ -1109,7 +1108,7 @@ async def eliminar_csv(
         if not csv_guardado:
             raise HTTPException(status_code=404, detail="Archivo no encontrado")
         
-        # Eliminar archivo físico
+        # Eliminar archivo fÃ­sico
         ruta_real = obtener_ruta_csv_real(csv_guardado.ruta_archivo)
         if os.path.exists(ruta_real):
             os.remove(ruta_real)
@@ -1137,7 +1136,7 @@ class MarcarPedidaRequest(BaseModel):
 @router.post("/pedidas")
 async def marcar_pieza_pedida(
     request: MarcarPedidaRequest,
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Marcar una pieza como pedida/comprada"""
@@ -1171,7 +1170,7 @@ async def marcar_pieza_pedida(
         db.add(nueva)
         db.commit()
         
-        logger.info(f"Usuario {current_user.email} marcó como pedida: {request.referencia}")
+        logger.info(f"Usuario {current_user.email} marcÃ³ como pedida: {request.referencia}")
         return {"success": True, "message": "Pieza marcada como pedida"}
         
     except HTTPException:
@@ -1184,7 +1183,7 @@ async def marcar_pieza_pedida(
 
 @router.get("/pedidas")
 async def listar_piezas_pedidas(
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Listar piezas pedidas (no recibidas)"""
@@ -1217,7 +1216,7 @@ async def listar_piezas_pedidas(
 @router.delete("/pedidas/{referencia}")
 async def desmarcar_pieza_pedida(
     referencia: str,
-    current_user: TokenData = Depends(get_current_user),
+    current_user: Usuario = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Desmarcar una pieza como pedida (cancelar pedido)"""
@@ -1241,3 +1240,4 @@ async def desmarcar_pieza_pedida(
         db.rollback()
         logger.error(f"Error desmarcando pedida: {e}")
         raise HTTPException(status_code=500, detail="Error al cancelar pedido")
+

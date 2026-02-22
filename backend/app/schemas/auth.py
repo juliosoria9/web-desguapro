@@ -79,6 +79,7 @@ class EntornoModulosUpdate(BaseModel):
     modulo_inventario_piezas: Optional[bool] = None
     modulo_estudio_coches: Optional[bool] = None
     modulo_paqueteria: Optional[bool] = None
+    modulo_oem_equivalentes: Optional[bool] = None
 
 
 class EntornoTrabajoResponse(BaseModel):
@@ -99,6 +100,7 @@ class EntornoTrabajoResponse(BaseModel):
     modulo_inventario_piezas: bool = True
     modulo_estudio_coches: bool = True
     modulo_paqueteria: bool = True
+    modulo_oem_equivalentes: bool = True
     
     class Config:
         from_attributes = True

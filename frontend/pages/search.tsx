@@ -69,6 +69,9 @@ interface SearchResult {
   tipo_pieza?: string;
   referencias_iam?: string[];
   referencias_iam_texto?: string;
+  // OEM equivalentes filtradas por relevancia (eBay)
+  oem_equivalentes?: { referencia: string; total_en_venta: number }[];
+  oem_equivalentes_texto?: string;
   // Nuevos campos multi-plataforma
   resultados_por_plataforma?: PlataformaResultado[];
   plataformas_consultadas?: number;
@@ -613,6 +616,46 @@ export default function SearchPage() {
                     >
                       📋 Copiar
                     </button>
+                  </div>
+                </div>
+              )}
+
+              {/* OEM equivalentes relevantes (eBay) */}
+              {result.oem_equivalentes && result.oem_equivalentes.length > 0 && (
+                <div className="mb-4 bg-blue-50 border border-blue-200 rounded-lg p-3">
+                  <div className="flex items-center gap-2 mb-2">
+                    <span className="text-xs font-medium text-blue-700">🔗 OEM equivalentes (más vendidas):</span>
+                    <button 
+                      onClick={() => {
+                        const text = result.oem_equivalentes!.map(r => r.referencia).join(' / ');
+                        navigator.clipboard.writeText(text);
+                        toast.success('OEM copiadas');
+                      }}
+                      className="ml-auto text-blue-600 hover:text-blue-800 text-xs"
+                      title="Copiar OEM"
+                    >
+                      📋 Copiar
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {result.oem_equivalentes.map((oem, i) => (
+                      <span
+                        key={i}
+                        className="inline-flex items-center gap-1.5 font-mono text-sm bg-white border border-blue-200 rounded-lg px-3 py-1.5 cursor-pointer hover:bg-blue-100 transition-colors"
+                        onClick={() => {
+                          navigator.clipboard.writeText(oem.referencia);
+                          toast.success(`${oem.referencia} copiada`);
+                        }}
+                        title="Click para copiar"
+                      >
+                        <span className="text-blue-900 font-semibold">{oem.referencia}</span>
+                        {oem.total_en_venta > 0 && (
+                          <span className="text-[10px] font-bold text-white bg-blue-500 rounded-full px-1.5 py-0.5 leading-none">
+                            {oem.total_en_venta}
+                          </span>
+                        )}
+                      </span>
+                    ))}
                   </div>
                 </div>
               )}

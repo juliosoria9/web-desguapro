@@ -113,3 +113,34 @@ def obtener_primera_referencia_por_proveedor(oem_ref):
             referencias_finales.append(ref)
     
     return referencias_finales
+
+
+def obtener_items_iam_por_proveedor(oem_ref):
+    """
+    Busca en todos los proveedores y retorna el primer item completo de cada uno
+    (con image_url, source, price, etc.) en vez de solo la referencia string.
+    Retorna lista de dicts con campos: iam_ref, source, brand, description, price, image_url.
+    """
+    resultados, _ = buscar_en_todos(oem_ref)
+
+    items_unicos = []
+    seen_refs = set()
+
+    for proveedor, items in resultados.items():
+        if not items:
+            continue
+        if proveedor == "Prasco":
+            for item in items:
+                ref = item.get("iam_ref", "")
+                if es_referencia_prasco_valida(ref) and ref not in seen_refs:
+                    seen_refs.add(ref)
+                    items_unicos.append(item)
+                    break
+        else:
+            item = items[0]
+            ref = item.get("iam_ref", "")
+            if ref and ref != "N/A" and ref not in seen_refs:
+                seen_refs.add(ref)
+                items_unicos.append(item)
+
+    return items_unicos

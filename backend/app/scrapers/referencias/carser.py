@@ -98,7 +98,7 @@ class CarserScraper:
                         img_url = self.BASE_URL + "/" + src
             
             results.append({
-                "source": "Carser",
+                "source": "Autocarser",
                 "iam_ref": iam_ref,
                 "brand": "CARSER",
                 "description": description,

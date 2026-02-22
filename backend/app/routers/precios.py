@@ -8,14 +8,20 @@ import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Tuple, Optional
 
-from app.schemas.precios import BuscarPreciosRequest, BuscarPreciosResponse, PrecioResumen, PrecioSugerido, InfoInventario, PlataformaResultado
+from app.schemas.precios import (
+    BuscarPreciosRequest, BuscarPreciosResponse, PrecioResumen, PrecioSugerido,
+    InfoInventario, PlataformaResultado, BusquedaCompletaRequest, BusquedaCompletaResponse,
+)
 from app.database import get_db
-from app.models.busqueda import Busqueda, Usuario, BaseDesguace, PiezaDesguace, PiezaVendida
+from app.models.busqueda import Busqueda, Usuario, BaseDesguace, PiezaDesguace, PiezaVendida, EntornoTrabajo
 from app.dependencies import get_current_user_with_workspace
 from core.scraper_factory import ScraperFactory
 from services.pricing import summarize, detect_outliers_iqr
 from services.precio_sugerido import sugerir_precio, sugerir_precio_db, tiene_configuracion_precios
 from app.scrapers.referencias import obtener_primera_referencia_por_proveedor
+from app.services.busqueda_completa import busqueda_completa
+from app.services.desguaces import DesguaceFactory
+from app.services.oem_ebay import buscar_oem_relevantes
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -347,6 +353,30 @@ async def buscar_precios(
             logger.info(f"Referencias IAM encontradas: {len(referencias_iam)}")
         except Exception as ref_error:
             logger.warning(f"Error buscando referencias IAM: {ref_error}")
+
+        # Buscar OEM equivalentes relevantes (filtradas por eBay) — solo si módulo activo
+        oem_equivalentes_list = []
+        oem_equivalentes_texto = ""
+        oem_modulo_activo = True
+        try:
+            entorno = db.query(EntornoTrabajo).filter(EntornoTrabajo.id == usuario.entorno_trabajo_id).first()
+            if entorno and hasattr(entorno, 'modulo_oem_equivalentes'):
+                oem_modulo_activo = entorno.modulo_oem_equivalentes if entorno.modulo_oem_equivalentes is not None else True
+        except Exception:
+            pass
+        try:
+            if oem_modulo_activo:
+                oem_equivalentes_list = buscar_oem_relevantes(request.referencia, top_n=5)
+                if oem_equivalentes_list:
+                    oem_equivalentes_texto = " / ".join(
+                        f"{r['referencia']} ({r['total_en_venta']})"
+                        for r in oem_equivalentes_list
+                    )
+                logger.info(f"OEM equivalentes relevantes: {len(oem_equivalentes_list)}")
+            else:
+                logger.info("Módulo OEM equivalentes desactivado para este entorno")
+        except Exception as oem_error:
+            logger.warning(f"Error buscando OEM equivalentes: {oem_error}")
         
         # Verificar si el entorno tiene configuración de precios
         tiene_config_precios = tiene_configuracion_precios(db, usuario.entorno_trabajo_id)
@@ -364,6 +394,8 @@ async def buscar_precios(
             tipo_pieza=tipo_pieza_detectado,
             referencias_iam=referencias_iam if referencias_iam else None,
             referencias_iam_texto=referencias_iam_texto if referencias_iam_texto else None,
+            oem_equivalentes=oem_equivalentes_list if oem_equivalentes_list else None,
+            oem_equivalentes_texto=oem_equivalentes_texto if oem_equivalentes_texto else None,
             resultados_por_plataforma=resultados_plataformas,
             plataformas_consultadas=len(plataformas_a_buscar),
             plataformas_con_resultados=plataformas_con_resultados,
@@ -395,3 +427,47 @@ async def plataformas_disponibles(
         "plataformas": scrapers,
         "total": len(scrapers)
     }
+
+
+@router.post("/busqueda-completa", response_model=BusquedaCompletaResponse)
+async def buscar_completa(
+    request: BusquedaCompletaRequest,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_user_with_workspace),
+):
+    """
+    Búsqueda completa de piezas: OEM equiv → stock propio → IAM → desguaces.
+    Usado desde la página de Venta.
+    """
+    if not usuario.entorno_trabajo_id:
+        raise HTTPException(status_code=400, detail="Usuario sin entorno de trabajo")
+
+    logger.info(f"[BúsquedaCompleta] {usuario.email} busca '{request.referencia}'")
+
+    try:
+        res = busqueda_completa(request.referencia, db, usuario.entorno_trabajo_id)
+
+        # Vendidas (extra info no incluida en orquestador)
+        from app.services.busqueda_completa import _buscar_vendidas
+        todas_refs = [request.referencia] + res.oem_equivalentes
+        vendidas = _buscar_vendidas(db, usuario.entorno_trabajo_id, todas_refs)
+
+        return BusquedaCompletaResponse(
+            referencia_original=res.referencia_original,
+            oem_equivalentes=res.oem_equivalentes,
+            stock_propio=res.stock_propio,
+            stock_otros_entornos=res.stock_otros_entornos,
+            piezas_vendidas=vendidas,
+            piezas_nuevas_iam=res.piezas_nuevas_iam,
+            resultados_desguaces=res.resultados_desguaces,
+            errores=res.errores,
+            total_stock=res.total_stock,
+            total_otros_entornos=res.total_otros_entornos,
+            total_desguaces=res.total_desguaces,
+            total_oem=res.total_oem,
+            total_iam=res.total_iam,
+            desguaces_disponibles=DesguaceFactory.get_nombres(),
+        )
+    except Exception as e:
+        logger.error(f"[BúsquedaCompleta] Error: {e}")
+        raise HTTPException(status_code=500, detail=f"Error en búsqueda completa: {str(e)}")

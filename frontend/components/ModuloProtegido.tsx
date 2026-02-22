@@ -28,7 +28,7 @@ export default function ModuloProtegido({ modulo, children }: ModuloProtegidoPro
   useEffect(() => {
     if (!mounted) return;
 
-    // Si no hay usuario, ProtectedRoute se encargará de redirigir al login
+    // Si no hay usuario, se redirigirá al login
     if (!user) {
       setChecking(false);
       return;

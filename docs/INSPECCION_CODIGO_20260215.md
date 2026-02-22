@@ -155,3 +155,4 @@ _Marcar aquí cada corrección aplicada:_
 ---
 
 **Última actualización:** 15 de Febrero de 2026
+ 
