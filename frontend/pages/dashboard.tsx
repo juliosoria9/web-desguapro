@@ -380,7 +380,7 @@ export default function DashboardPage() {
           </div>
 
           {/* Card: Venta - módulo comercial */}
-          {hasModulo('ventas') && (
+          {hasModulo('venta_comercial') && (
             <div
               className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer border border-gray-100 group"
               onClick={() => router.push('/venta')}

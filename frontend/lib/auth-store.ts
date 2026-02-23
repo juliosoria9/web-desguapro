@@ -14,6 +14,7 @@ export interface Modulos {
   paqueteria: boolean;
   oem_equivalentes: boolean;
   catalogo_vehiculos: boolean;
+  venta_comercial: boolean;
 }
 
 export interface User {
@@ -51,6 +52,7 @@ const defaultModulos: Modulos = {
   paqueteria: false,
   oem_equivalentes: false,
   catalogo_vehiculos: false,
+  venta_comercial: false,
 };
 
 // Normaliza el rol a minúsculas
