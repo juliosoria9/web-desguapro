@@ -72,6 +72,7 @@ def migrar():
     # entornos_trabajo: módulos nuevos
     add_column_if_missing(cursor, "entornos_trabajo", "modulo_paqueteria", "BOOLEAN DEFAULT 1", tables)
     add_column_if_missing(cursor, "entornos_trabajo", "modulo_oem_equivalentes", "BOOLEAN DEFAULT 1", tables)
+    add_column_if_missing(cursor, "entornos_trabajo", "modulo_catalogo_vehiculos", "BOOLEAN DEFAULT 1", tables)
 
     # registros_paquetes: sucursal_paqueteria_id, grupo_paquete
     add_column_if_missing(cursor, "registros_paquetes", "sucursal_paqueteria_id", "INTEGER REFERENCES sucursales_paqueteria(id) ON DELETE SET NULL", tables)

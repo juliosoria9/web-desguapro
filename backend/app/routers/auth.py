@@ -122,6 +122,7 @@ async def login(request: LoginRequest, req: Request, db: Session = Depends(get_d
                     "estudio_coches": entorno.modulo_estudio_coches if hasattr(entorno, 'modulo_estudio_coches') and entorno.modulo_estudio_coches is not None else True,
                     "paqueteria": entorno.modulo_paqueteria if hasattr(entorno, 'modulo_paqueteria') and entorno.modulo_paqueteria is not None else True,
                     "oem_equivalentes": entorno.modulo_oem_equivalentes if hasattr(entorno, 'modulo_oem_equivalentes') and entorno.modulo_oem_equivalentes is not None else True,
+                    "catalogo_vehiculos": entorno.modulo_catalogo_vehiculos if hasattr(entorno, 'modulo_catalogo_vehiculos') and entorno.modulo_catalogo_vehiculos is not None else True,
                 }
         
         # Crear response con entorno_nombre y módulos
@@ -723,6 +724,8 @@ async def actualizar_modulos_entorno(
             entorno.modulo_paqueteria = modulos.modulo_paqueteria
         if modulos.modulo_oem_equivalentes is not None:
             entorno.modulo_oem_equivalentes = modulos.modulo_oem_equivalentes
+        if modulos.modulo_catalogo_vehiculos is not None:
+            entorno.modulo_catalogo_vehiculos = modulos.modulo_catalogo_vehiculos
         
         db.commit()
         db.refresh(entorno)

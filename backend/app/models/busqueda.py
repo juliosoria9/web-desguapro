@@ -66,6 +66,7 @@ class EntornoTrabajo(Base):
     modulo_estudio_coches = Column(Boolean, default=True)  # Estudio de coches
     modulo_paqueteria = Column(Boolean, default=True)  # Gestión de paquetería y envíos
     modulo_oem_equivalentes = Column(Boolean, default=True)  # OEM equivalentes (eBay)
+    modulo_catalogo_vehiculos = Column(Boolean, default=True)  # Catálogo de vehículos
     
     # Relaciones
     usuarios = relationship("Usuario", back_populates="entorno_trabajo", foreign_keys="Usuario.entorno_trabajo_id")

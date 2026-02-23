@@ -480,6 +480,7 @@ export default function DashboardPage() {
           )}
 
           {/* Card: Catálogo Vehículos (Todos los usuarios) */}
+          {hasModulo('catalogo_vehiculos') && (
           <div
             className="bg-white rounded-2xl shadow-md p-6 hover:shadow-xl hover:scale-[1.02] transition-all duration-300 cursor-pointer border border-gray-100 group"
             onClick={() => router.push('/admin/vehiculos')}
@@ -496,6 +497,7 @@ export default function DashboardPage() {
               Marcas, modelos, años y precios
             </p>
           </div>
+          )}
 
           {/* Card: Tickets de Soporte (Todos los usuarios) */}
           <div

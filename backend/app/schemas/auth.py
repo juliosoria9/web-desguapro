@@ -80,6 +80,7 @@ class EntornoModulosUpdate(BaseModel):
     modulo_estudio_coches: Optional[bool] = None
     modulo_paqueteria: Optional[bool] = None
     modulo_oem_equivalentes: Optional[bool] = None
+    modulo_catalogo_vehiculos: Optional[bool] = None
 
 
 class EntornoTrabajoResponse(BaseModel):
@@ -101,6 +102,7 @@ class EntornoTrabajoResponse(BaseModel):
     modulo_estudio_coches: bool = True
     modulo_paqueteria: bool = True
     modulo_oem_equivalentes: bool = True
+    modulo_catalogo_vehiculos: bool = True
     
     class Config:
         from_attributes = True

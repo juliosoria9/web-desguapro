@@ -23,6 +23,7 @@ interface EntornoTrabajo {
   modulo_estudio_coches: boolean;
   modulo_paqueteria: boolean;
   modulo_oem_equivalentes: boolean;
+  modulo_catalogo_vehiculos: boolean;
 }
 
 interface ModuloConfig {
@@ -43,6 +44,7 @@ const MODULOS_DISPONIBLES: ModuloConfig[] = [
   { key: 'modulo_estudio_coches', label: 'Estudio Coches', descripcion: 'Análisis y estudio de vehículos' },
   { key: 'modulo_paqueteria', label: 'Gestión Paquetería', descripcion: 'Control de envíos y paquetes' },
   { key: 'modulo_oem_equivalentes', label: 'OEM Equivalentes', descripcion: 'Búsqueda OEM equivalentes (eBay)' },
+  { key: 'modulo_catalogo_vehiculos', label: 'Catálogo Vehículos', descripcion: 'Catálogo de marcas, modelos y precios' },
 ];
 
 export default function EnvironmentsAdminPage() {
