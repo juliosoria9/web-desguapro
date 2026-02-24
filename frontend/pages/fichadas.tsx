@@ -563,10 +563,10 @@ function FichadasContent() {
             <div className="flex flex-wrap gap-4 mb-4 text-xs">
               <span className="text-gray-500">Tiempo entre piezas:</span>
               <span className="flex items-center gap-1">
-                <span className="w-3 h-3 rounded bg-green-500"></span> 0-5 min
+                <span className="w-3 h-3 rounded bg-green-500"></span> 0-8 min
               </span>
               <span className="flex items-center gap-1">
-                <span className="w-3 h-3 rounded bg-yellow-500"></span> 5-15 min
+                <span className="w-3 h-3 rounded bg-yellow-500"></span> 8-15 min
               </span>
               <span className="flex items-center gap-1">
                 <span className="w-3 h-3 rounded bg-orange-500"></span> 15-30 min

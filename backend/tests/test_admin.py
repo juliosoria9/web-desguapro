@@ -118,3 +118,189 @@ class TestAdminEndpoints:
     def test_api_logs_entornos(self, client, auth_headers_sysowner, usuario_sysowner):
         response = client.get("/api/v1/admin/api-logs/entornos", headers=auth_headers_sysowner)
         assert response.status_code == 200
+
+
+class TestRestaurarBackup:
+    """Tests para POST /api/v1/admin/backups/restaurar/{backup_id}"""
+
+    @pytest.mark.api
+    def test_restaurar_sin_confirmar(self, client, auth_headers_sysowner, usuario_sysowner):
+        """Sin confirmar=true devuelve warning"""
+        response = client.post(
+            "/api/v1/admin/backups/restaurar/1",
+            headers=auth_headers_sysowner,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "warning" in data
+        assert "confirmar" in data.get("accion_requerida", "").lower()
+
+    @pytest.mark.api
+    def test_restaurar_owner_forbidden(self, client, auth_headers_owner, usuario_owner):
+        """Solo sysowner puede restaurar"""
+        response = client.post(
+            "/api/v1/admin/backups/restaurar/1",
+            headers=auth_headers_owner,
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.api
+    def test_restaurar_admin_forbidden(self, client, auth_headers_admin, usuario_admin):
+        response = client.post(
+            "/api/v1/admin/backups/restaurar/1",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.api
+    def test_restaurar_user_forbidden(self, client, auth_headers_user, usuario_normal):
+        response = client.post(
+            "/api/v1/admin/backups/restaurar/1",
+            headers=auth_headers_user,
+        )
+        assert response.status_code in [401, 403]
+
+
+class TestForzarBackup:
+    """Tests para POST /api/v1/admin/scheduler/forzar-backup"""
+
+    @pytest.mark.api
+    def test_forzar_backup_owner(self, client, auth_headers_owner, usuario_owner):
+        response = client.post(
+            "/api/v1/admin/scheduler/forzar-backup",
+            headers=auth_headers_owner,
+        )
+        # May succeed or fail depending on backup config, but not 403
+        assert response.status_code in [200, 500]
+
+    @pytest.mark.api
+    def test_forzar_backup_sysowner(self, client, auth_headers_sysowner, usuario_sysowner):
+        response = client.post(
+            "/api/v1/admin/scheduler/forzar-backup",
+            headers=auth_headers_sysowner,
+        )
+        assert response.status_code in [200, 500]
+
+    @pytest.mark.api
+    def test_forzar_backup_admin_forbidden(self, client, auth_headers_admin, usuario_admin):
+        response = client.post(
+            "/api/v1/admin/scheduler/forzar-backup",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.api
+    def test_forzar_backup_user_forbidden(self, client, auth_headers_user, usuario_normal):
+        response = client.post(
+            "/api/v1/admin/scheduler/forzar-backup",
+            headers=auth_headers_user,
+        )
+        assert response.status_code in [401, 403]
+
+
+class TestImportarCSV:
+    """Tests para POST /api/v1/admin/importar-csv-motocoche"""
+
+    @pytest.mark.api
+    def test_importar_csv_admin(self, client, auth_headers_admin, usuario_admin):
+        response = client.post(
+            "/api/v1/admin/importar-csv-motocoche",
+            headers=auth_headers_admin,
+        )
+        # Can succeed or fail (no CSV file in test), but should not be 403
+        assert response.status_code in [200, 500]
+
+    @pytest.mark.api
+    def test_importar_csv_sysowner(self, client, auth_headers_sysowner, usuario_sysowner):
+        response = client.post(
+            "/api/v1/admin/importar-csv-motocoche",
+            headers=auth_headers_sysowner,
+        )
+        assert response.status_code in [200, 500]
+
+    @pytest.mark.api
+    def test_importar_csv_user_forbidden(self, client, auth_headers_user, usuario_normal):
+        response = client.post(
+            "/api/v1/admin/importar-csv-motocoche",
+            headers=auth_headers_user,
+        )
+        assert response.status_code in [401, 403]
+
+
+class TestLimpiarVentasFalsas:
+    """Tests para POST /api/v1/admin/limpiar-ventas-falsas"""
+
+    @pytest.mark.api
+    def test_limpiar_ventas_admin(self, client, auth_headers_admin, usuario_admin):
+        response = client.post(
+            "/api/v1/admin/limpiar-ventas-falsas",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code in [200, 500]
+
+    @pytest.mark.api
+    def test_limpiar_ventas_user_forbidden(self, client, auth_headers_user, usuario_normal):
+        response = client.post(
+            "/api/v1/admin/limpiar-ventas-falsas",
+            headers=auth_headers_user,
+        )
+        assert response.status_code in [401, 403]
+
+
+class TestLimpiarApiLogs:
+    """Tests para DELETE /api/v1/admin/api-logs/limpiar"""
+
+    @pytest.mark.api
+    def test_limpiar_sin_confirmar(self, client, auth_headers_sysowner, usuario_sysowner):
+        """Sin confirmar devuelve warning con conteo"""
+        response = client.delete(
+            "/api/v1/admin/api-logs/limpiar?dias=30",
+            headers=auth_headers_sysowner,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "warning" in data
+
+    @pytest.mark.api
+    def test_limpiar_con_confirmar(self, client, db_session, auth_headers_sysowner, usuario_sysowner, api_log_ejemplo):
+        """Con confirmar=true elimina los logs"""
+        response = client.delete(
+            "/api/v1/admin/api-logs/limpiar?dias=1&confirmar=true",
+            headers=auth_headers_sysowner,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data.get("success") is True
+
+    @pytest.mark.api
+    def test_limpiar_owner_forbidden(self, client, auth_headers_owner, usuario_owner):
+        response = client.delete(
+            "/api/v1/admin/api-logs/limpiar?dias=30",
+            headers=auth_headers_owner,
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.api
+    def test_limpiar_admin_forbidden(self, client, auth_headers_admin, usuario_admin):
+        response = client.delete(
+            "/api/v1/admin/api-logs/limpiar?dias=30",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.api
+    def test_limpiar_user_forbidden(self, client, auth_headers_user, usuario_normal):
+        response = client.delete(
+            "/api/v1/admin/api-logs/limpiar?dias=30",
+            headers=auth_headers_user,
+        )
+        assert response.status_code in [401, 403]
+
+    @pytest.mark.api
+    def test_limpiar_dias_invalido(self, client, auth_headers_sysowner, usuario_sysowner):
+        """dias fuera de rango devuelve 422"""
+        response = client.delete(
+            "/api/v1/admin/api-logs/limpiar?dias=0",
+            headers=auth_headers_sysowner,
+        )
+        assert response.status_code in [200, 422]

@@ -16,7 +16,7 @@ from app.models.busqueda import (
     SucursalPaqueteria, StockCajaSucursal,
 )
 from app.schemas.paqueteria import (
-    RegistroPaqueteCreate, RegistroPaqueteUpdate, RegistroPaqueteResponse,
+    RegistroPaqueteCreate, RegistroPaqueteLoteCreate, RegistroPaqueteUpdate, RegistroPaqueteResponse,
     RankingUsuario, RankingResponse, MisRegistrosResponse,
     TipoCajaCreate, TipoCajaUpdate, TipoCajaResponse,
     MovimientoCajaCreate, MovimientoCajaResponse, ResumenTipoCaja,
@@ -226,6 +226,47 @@ async def registrar_paquete(
     if not entorno_id:
         raise HTTPException(status_code=400, detail="Selecciona una empresa antes de registrar")
 
+    # Comprobar duplicados de piezas en el mismo día
+    piezas_entrantes = [p.strip() for p in id_pieza.split(',') if p.strip()]
+
+    # Duplicados internos (misma pieza repetida en la petición)
+    vistos = set()
+    duplicados_internos = set()
+    for p in piezas_entrantes:
+        if p in vistos:
+            duplicados_internos.add(p)
+        vistos.add(p)
+    if duplicados_internos:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Piezas duplicadas en la misma petición: {', '.join(sorted(duplicados_internos))}",
+        )
+
+    # Duplicados contra registros del mismo día y entorno
+    hoy = now_spain_naive().date()
+    registros_hoy = (
+        db.query(RegistroPaquete.id_pieza)
+        .filter(
+            RegistroPaquete.entorno_trabajo_id == entorno_id,
+            func.date(RegistroPaquete.fecha_registro) == hoy,
+        )
+        .all()
+    )
+    ids_empaquetados_hoy: set[str] = set()
+    for (campo_pieza,) in registros_hoy:
+        if campo_pieza:
+            for p in campo_pieza.split(','):
+                p_clean = p.strip().upper()
+                if p_clean:
+                    ids_empaquetados_hoy.add(p_clean)
+
+    duplicados_dia = [p for p in piezas_entrantes if p in ids_empaquetados_hoy]
+    if duplicados_dia:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Piezas ya empaquetadas hoy: {', '.join(duplicados_dia)}",
+        )
+
     # Validar sucursal_id si se proporciona
     suc_id = datos.sucursal_id
     if suc_id:
@@ -294,6 +335,103 @@ async def registrar_paquete(
         sucursal_nombre=_sucursal_nombre(db, registro.sucursal_paqueteria_id),
         grupo_paquete=registro.grupo_paquete,
     )
+
+
+@router.post("/registrar-lote", response_model=list[RegistroPaqueteResponse])
+async def registrar_paquete_lote(
+    datos: RegistroPaqueteLoteCreate,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """Registrar múltiples piezas asociadas a una caja de una vez"""
+    _check_paqueteria_modulo(usuario, db)
+
+    id_caja = datos.id_caja.strip().upper()
+    if not id_caja:
+        raise HTTPException(status_code=400, detail="El ID de caja no puede estar vacío")
+
+    piezas = [p.strip().upper() for p in datos.id_piezas if p.strip()]
+    if not piezas:
+        raise HTTPException(status_code=400, detail="Debe incluir al menos una pieza")
+
+    entorno_id = _get_entorno_id(usuario, datos.entorno_id)
+    if not entorno_id:
+        raise HTTPException(status_code=400, detail="Selecciona una empresa antes de registrar")
+
+    suc_id = datos.sucursal_id
+    if suc_id:
+        suc = db.query(SucursalPaqueteria).filter(
+            SucursalPaqueteria.id == suc_id,
+            SucursalPaqueteria.entorno_trabajo_id == entorno_id,
+            SucursalPaqueteria.activa == True,
+        ).first()
+        if not suc:
+            raise HTTPException(status_code=404, detail="Sucursal no encontrada o inactiva")
+
+    registros = []
+    for id_pieza in piezas:
+        registro = RegistroPaquete(
+            usuario_id=usuario.id,
+            entorno_trabajo_id=entorno_id,
+            id_caja=id_caja,
+            id_pieza=id_pieza,
+            sucursal_paqueteria_id=suc_id,
+            grupo_paquete=datos.grupo_paquete,
+        )
+        db.add(registro)
+        registros.append(registro)
+
+    # Auto-descontar stock de caja solo UNA vez (es una sola caja física)
+    tipo_caja = (
+        db.query(TipoCaja)
+        .filter(
+            func.upper(TipoCaja.referencia_caja) == id_caja,
+            TipoCaja.entorno_trabajo_id == entorno_id,
+        )
+        .first()
+    )
+    if tipo_caja:
+        stock_antes = tipo_caja.stock_actual or 0
+        if stock_antes > 0:
+            tipo_caja.stock_actual = stock_antes - 1
+            mov = MovimientoCaja(
+                tipo_caja_id=tipo_caja.id,
+                entorno_trabajo_id=entorno_id,
+                usuario_id=usuario.id,
+                cantidad=-1,
+                tipo_movimiento="consumo",
+                notas=f"Auto: {len(piezas)} pieza(s) empaquetadas en caja",
+                sucursal_paqueteria_id=suc_id,
+            )
+            db.add(mov)
+            if suc_id:
+                stock_suc = _get_or_create_stock_sucursal(db, tipo_caja.id, suc_id)
+                if stock_suc.stock_actual > 0:
+                    stock_suc.stock_actual -= 1
+            logger.info(f"Stock caja '{tipo_caja.referencia_caja}' auto-restado: {stock_antes} → {stock_antes - 1}")
+
+    db.commit()
+    for reg in registros:
+        db.refresh(reg)
+
+    suc_nombre = _sucursal_nombre(db, suc_id)
+    logger.info(f"Paquetería lote: {usuario.email} metió {len(piezas)} piezas en caja {id_caja} (sucursal={suc_id})")
+
+    return [
+        RegistroPaqueteResponse(
+            id=reg.id,
+            usuario_id=usuario.id,
+            usuario_email=usuario.email,
+            entorno_trabajo_id=reg.entorno_trabajo_id,
+            id_caja=reg.id_caja,
+            id_pieza=reg.id_pieza,
+            fecha_registro=reg.fecha_registro,
+            sucursal_id=reg.sucursal_paqueteria_id,
+            sucursal_nombre=suc_nombre,
+            grupo_paquete=reg.grupo_paquete,
+        )
+        for reg in registros
+    ]
 
 
 # ============== RANKING DEL DÍA ==============
@@ -451,6 +589,8 @@ async def detalle_usuario(
     if not usr_target:
         raise HTTPException(status_code=404, detail="Usuario no encontrado")
 
+    ent_id = entorno_id if (usuario.rol == "sysowner" and entorno_id) else usuario.entorno_trabajo_id
+
     query = (
         db.query(RegistroPaquete)
         .filter(
@@ -458,6 +598,8 @@ async def detalle_usuario(
             func.date(RegistroPaquete.fecha_registro) == fecha_filtro.strftime("%Y-%m-%d"),
         )
     )
+    if ent_id:
+        query = query.filter(RegistroPaquete.entorno_trabajo_id == ent_id)
     if sucursal_id:
         query = query.filter(RegistroPaquete.sucursal_paqueteria_id == sucursal_id)
 
@@ -566,7 +708,7 @@ async def borrar_registro(
 
     es_admin = usuario.rol in ["admin", "owner", "sysowner"]
     es_propio = registro.usuario_id == usuario.id
-    es_de_hoy = registro.fecha_registro.date() == date.today() if registro.fecha_registro else False
+    es_de_hoy = registro.fecha_registro.date() == now_spain_naive().date() if registro.fecha_registro else False
 
     if not es_admin and not (es_propio and es_de_hoy):
         raise HTTPException(status_code=403, detail="Solo puedes borrar tus registros del día actual")
@@ -630,7 +772,7 @@ async def editar_registro(
 
     es_admin = usuario.rol in ["admin", "owner", "sysowner"]
     es_propio = registro.usuario_id == usuario.id
-    es_de_hoy = registro.fecha_registro.date() == date.today() if registro.fecha_registro else False
+    es_de_hoy = registro.fecha_registro.date() == now_spain_naive().date() if registro.fecha_registro else False
 
     if not es_admin and not (es_propio and es_de_hoy):
         raise HTTPException(status_code=403, detail="Solo puedes editar tus registros del día actual")
@@ -700,6 +842,7 @@ async def editar_registro(
         fecha_registro=registro.fecha_registro,
         sucursal_id=registro.sucursal_paqueteria_id,
         sucursal_nombre=_sucursal_nombre(db, registro.sucursal_paqueteria_id),
+        grupo_paquete=registro.grupo_paquete,
     )
 
 
@@ -793,7 +936,7 @@ async def editar_tipo_caja(
         tipo.tipo_nombre = datos.tipo_nombre.strip()
     if datos.descripcion is not None:
         tipo.descripcion = datos.descripcion.strip() if datos.descripcion else None
-    if hasattr(datos, 'dias_aviso'):
+    if 'dias_aviso' in datos.model_fields_set:
         tipo.dias_aviso = datos.dias_aviso
         # Si cambian los días de aviso, resetear para que se evalúe de nuevo
         tipo.aviso_enviado = False
@@ -1179,7 +1322,7 @@ async def estadisticas_paqueteria(
 
     ent_id = entorno_id if (usuario.rol == "sysowner" and entorno_id) else usuario.entorno_trabajo_id
 
-    hoy = date.today()
+    hoy = now_spain_naive().date()
     inicio_semana = hoy - timedelta(days=hoy.weekday())
     inicio_mes = hoy.replace(day=1)
 
@@ -1336,11 +1479,20 @@ async def estadisticas_paqueteria(
                     func.date(RegistroPaquete.fecha_registro) >= inicio_mes.strftime("%Y-%m-%d"),
                 ).scalar() or 0
             )
+            suc_total_semana = (
+                db.query(func.count(func.distinct(grupo_expr_est)))
+                .filter(
+                    RegistroPaquete.entorno_trabajo_id == ent_id,
+                    RegistroPaquete.sucursal_paqueteria_id == suc.id,
+                    func.date(RegistroPaquete.fecha_registro) >= inicio_semana.strftime("%Y-%m-%d"),
+                ).scalar() or 0
+            )
             por_sucursal.append(EstadisticasSucursal(
                 sucursal_id=suc.id,
                 sucursal_nombre=suc.nombre,
                 color_hex=suc.color_hex or "#3B82F6",
                 total_hoy=suc_total_hoy,
+                total_semana=suc_total_semana,
                 total_mes=suc_total_mes,
             ))
 

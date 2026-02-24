@@ -261,7 +261,8 @@ function PaqueteriaContent() {
 
   // Inputs
   const [idCaja, setIdCaja] = useState('');
-  const [idPieza, setIdPieza] = useState('');
+  const [idPiezaInput, setIdPiezaInput] = useState('');
+  const [piezasList, setPiezasList] = useState<string[]>([]);
   const [registrando, setRegistrando] = useState(false);
   const [cajasAsociadas, setCajasAsociadas] = useState(0);
   const [piezaActiva, setPiezaActiva] = useState(false);
@@ -410,19 +411,17 @@ function PaqueteriaContent() {
   useEffect(() => {
     if (mounted && user && sucursalCargada) {
       cargarRanking();
-      if (!esAdmin) {
-        cargarMisRegistros();
-      }
+      cargarMisRegistros();
       if (esAdmin && mostrarTodos) {
         cargarTodosRegistros();
       }
     }
   }, [mounted, fechaFiltro, user, selectedEmpresa, sucursalSeleccionada, sucursalCargada]);
 
-  // Focus automático en caja al montar
+  // Focus automático en pieza al montar
   useEffect(() => {
     if (mounted) {
-      setTimeout(() => inputCajaRef.current?.focus(), 200);
+      setTimeout(() => inputPiezaRef.current?.focus(), 200);
     }
   }, [mounted]);
 
@@ -661,20 +660,61 @@ function PaqueteriaContent() {
   };
 
   // ============== REGISTRO (escaneo) ==============
-  // Flujo: Pieza → Enter → Caja (repetir) → solo ceros = volver a Pieza
+  // Flujo: Piezas (una a una) → 0000 → Cajas (una a una) → 0000 → Reiniciar
   const generarGrupo = () => {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
     return 'xxxx-xxxx-xxxx'.replace(/x/g, () => Math.floor(Math.random() * 16).toString(16));
   };
 
+  const resetScaneo = () => {
+    setIdCaja('');
+    setIdPiezaInput('');
+    setPiezasList([]);
+    setPiezaActiva(false);
+    setCajasAsociadas(0);
+    setGrupoPaqueteActual('');
+    inputPiezaRef.current?.focus();
+  };
+
+  const quitarPieza = (idx: number) => {
+    setPiezasList(prev => prev.filter((_, i) => i !== idx));
+  };
+
   const handlePiezaKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter') {
       e.preventDefault();
-      if (idPieza.trim()) {
-        setPiezaActiva(true);
-        setCajasAsociadas(0);
-        setGrupoPaqueteActual(generarGrupo());
-        inputCajaRef.current?.focus();
+      const val = idPiezaInput.trim().toUpperCase();
+      // 0000 = pasar a fase cajas
+      if (/^0+$/.test(val)) {
+        if (piezasList.length > 0) {
+          setPiezaActiva(true);
+          setGrupoPaqueteActual(generarGrupo());
+          setIdPiezaInput('');
+          setCajasAsociadas(0);
+          inputCajaRef.current?.focus();
+        } else {
+          toast.error('Escanea al menos una pieza');
+          setIdPiezaInput('');
+        }
+        return;
+      }
+      if (val) {
+        if (piezasList.includes(val)) {
+          toast.error(`Pieza ${val} ya está en la lista`);
+        } else {
+          // Comprobar si ya fue empaquetada hoy (pre-check local)
+          const registrosHoy = todosRegistros.length > 0 ? todosRegistros : misRegistros;
+          const yaEmpaquetada = registrosHoy.some(r =>
+            r.id_pieza?.split(',').map((p: string) => p.trim().toUpperCase()).includes(val)
+          );
+          if (yaEmpaquetada) {
+            toast.error(`⚠️ Pieza ${val} ya fue empaquetada hoy`);
+          } else {
+            setPiezasList(prev => [...prev, val]);
+            toast.success(`📋 Pieza ${val} añadida (${piezasList.length + 1})`, { duration: 1000 });
+          }
+        }
+        setIdPiezaInput('');
       }
     }
   };
@@ -686,32 +726,27 @@ function PaqueteriaContent() {
       // Detectar código terminador: cualquier cadena de solo ceros (0000, 00000, etc.)
       if (/^0+$/.test(val)) {
         if (cajasAsociadas > 0) {
-          toast.success(`✅ ${idPieza.trim().toUpperCase()}: ${cajasAsociadas} caja${cajasAsociadas > 1 ? 's' : ''} asociada${cajasAsociadas > 1 ? 's' : ''}`, { duration: 3000 });
+          toast.success(`✅ ${piezasList.length} pieza${piezasList.length > 1 ? 's' : ''}: ${cajasAsociadas} caja${cajasAsociadas > 1 ? 's' : ''} asociada${cajasAsociadas > 1 ? 's' : ''}`, { duration: 3000 });
         }
-        setIdCaja('');
-        setIdPieza('');
-        setPiezaActiva(false);
-        setCajasAsociadas(0);
-        setGrupoPaqueteActual('');
-        inputPiezaRef.current?.focus();
+        resetScaneo();
         return;
       }
-      if (val && idPieza.trim()) {
+      if (val && piezasList.length > 0) {
         registrar();
       }
     }
   };
 
   const registrar = async () => {
-    if (!idCaja.trim() || !idPieza.trim()) {
-      toast.error('Rellena ID de caja y ID de pieza');
+    if (!idCaja.trim() || piezasList.length === 0) {
+      toast.error('Necesitas al menos una pieza y una caja');
       return;
     }
     setRegistrando(true);
     try {
       const payload: any = {
         id_caja: idCaja.trim(),
-        id_pieza: idPieza.trim(),
+        id_pieza: piezasList.join(', '),
         grupo_paquete: grupoPaqueteActual || undefined,
       };
       if (esSysowner && selectedEmpresa) payload.entorno_id = selectedEmpresa;
@@ -723,11 +758,11 @@ function PaqueteriaContent() {
       );
       const count = cajasAsociadas + 1;
       setCajasAsociadas(count);
-      toast.success(`📦 ${idCaja.trim().toUpperCase()} → ${idPieza.trim().toUpperCase()} (${count})`, { duration: 1500 });
+      toast.success(`📦 ${idCaja.trim().toUpperCase()} → ${piezasList.length} pieza${piezasList.length > 1 ? 's' : ''} (${count} caja${count > 1 ? 's' : ''})`, { duration: 1500 });
       setIdCaja('');
       // Recargar datos
       cargarRanking();
-      if (!esAdmin) cargarMisRegistros();
+      cargarMisRegistros();
       if (esAdmin && mostrarTodos) cargarTodosRegistros();
       if (usuarioSeleccionado) verDetalleUsuario(usuarioSeleccionado);
       // Seguir en campo caja
@@ -770,7 +805,7 @@ function PaqueteriaContent() {
       );
       toast.success('Registro eliminado');
       cargarRanking();
-      if (!esAdmin) cargarMisRegistros();
+      cargarMisRegistros();
       if (esAdmin && mostrarTodos) cargarTodosRegistros();
       if (usuarioSeleccionado) verDetalleUsuario(usuarioSeleccionado);
     } catch (err: any) {
@@ -812,7 +847,7 @@ function PaqueteriaContent() {
       toast.success('Registro actualizado');
       cancelarEdicion();
       cargarRanking();
-      if (!esAdmin) cargarMisRegistros();
+      cargarMisRegistros();
       if (esAdmin && mostrarTodos) cargarTodosRegistros();
       if (usuarioSeleccionado) verDetalleUsuario(usuarioSeleccionado);
     } catch (err: any) {
@@ -942,8 +977,8 @@ function PaqueteriaContent() {
     }
   };
 
-  const cargarMovimientosTipo = async (tipoId: number) => {
-    if (expandedTipo === tipoId) {
+  const cargarMovimientosTipo = async (tipoId: number, skipToggle = false) => {
+    if (!skipToggle && expandedTipo === tipoId) {
       setExpandedTipo(null);
       return;
     }
@@ -1002,8 +1037,7 @@ function PaqueteriaContent() {
       // Recargar
       cargarResumenCajas();
       if (expandedTipo === tipoId) {
-        cargarMovimientosTipo(tipoId);
-        setExpandedTipo(tipoId); // mantener expandido
+        cargarMovimientosTipo(tipoId, true);
       }
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Error al registrar movimiento');
@@ -1225,6 +1259,8 @@ function PaqueteriaContent() {
                 value={selectedEmpresa || ''}
                 onChange={(e) => {
                   setSelectedEmpresa(e.target.value ? Number(e.target.value) : null);
+                  setSucursalSeleccionada(null);
+                  setSucursalCargada(false);
                   setUsuarioSeleccionado(null);
                   setDetalleRegistros([]);
                 }}
@@ -1258,26 +1294,57 @@ function PaqueteriaContent() {
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-6 h-6 text-amber-500">
               <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 0 1-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 0 1-3 0m3 0a1.5 1.5 0 0 0-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 0 0-3.213-9.193 2.056 2.056 0 0 0-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 0 0-10.026 0 1.106 1.106 0 0 0-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
             </svg>
-            Registrar Pieza en Caja
+            Registrar Piezas en Caja
           </h2>
           <div className="flex flex-col sm:flex-row gap-4">
             <div className="flex-1">
-              <label className="block text-sm font-medium text-gray-600 mb-1">ID Pieza</label>
+              <label className="block text-sm font-medium text-gray-600 mb-1">
+                ID Pieza
+                {piezasList.length > 0 && (
+                  <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-bold bg-blue-100 text-blue-700">
+                    {piezasList.length} pieza{piezasList.length > 1 ? 's' : ''}
+                  </span>
+                )}
+              </label>
               <input
                 ref={inputPiezaRef}
                 type="text"
-                value={idPieza}
-                onChange={(e) => setIdPieza(e.target.value)}
+                value={idPiezaInput}
+                onChange={(e) => setIdPiezaInput(e.target.value)}
                 onKeyDown={handlePiezaKeyDown}
-                placeholder="Escanea la pieza..."
+                placeholder={piezaActiva ? 'Piezas confirmadas' : piezasList.length > 0 ? 'Escanea otra pieza o 0000 para cajas...' : 'Escanea la pieza...'}
                 className={`w-full px-4 py-3 text-lg border-2 rounded-xl focus:outline-none focus:ring-2 font-mono uppercase ${
                   piezaActiva
                     ? 'border-green-400 bg-green-50 focus:ring-green-500 focus:border-green-500'
-                    : 'border-blue-300 focus:ring-blue-500 focus:border-blue-500'
+                    : piezasList.length > 0
+                      ? 'border-blue-400 bg-blue-50 focus:ring-blue-500 focus:border-blue-500'
+                      : 'border-blue-300 focus:ring-blue-500 focus:border-blue-500'
                 }`}
                 autoComplete="off"
                 disabled={piezaActiva}
               />
+              {/* Chips de piezas escaneadas */}
+              {piezasList.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-2">
+                  {piezasList.map((pieza, idx) => (
+                    <span
+                      key={idx}
+                      className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-bold bg-blue-100 text-blue-800 border border-blue-200"
+                    >
+                      {pieza}
+                      {!piezaActiva && (
+                        <button
+                          onClick={() => quitarPieza(idx)}
+                          className="ml-0.5 text-blue-400 hover:text-red-500 transition-colors"
+                          title="Quitar pieza"
+                        >
+                          <XIcon className="w-3 h-3" />
+                        </button>
+                      )}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
             <div className="flex-1 relative">
               <label className="block text-sm font-medium text-gray-600 mb-1">
@@ -1294,7 +1361,7 @@ function PaqueteriaContent() {
                 value={idCaja}
                 onChange={(e) => setIdCaja(e.target.value)}
                 onKeyDown={handleCajaKeyDown}
-                placeholder={piezaActiva ? 'Escanea cajas... (0000 = siguiente pieza)' : 'Primero escanea la pieza'}
+                placeholder={piezaActiva ? 'Escanea cajas... (0000 = terminar)' : 'Primero escanea las piezas'}
                 className={`w-full px-4 py-3 text-lg border-2 rounded-xl focus:outline-none focus:ring-2 font-mono uppercase ${
                   piezaActiva
                     ? 'border-amber-300 focus:ring-amber-500 focus:border-amber-500'
@@ -1305,28 +1372,23 @@ function PaqueteriaContent() {
               />
             </div>
             <div className="flex items-end gap-2">
-              {piezaActiva && (
+              {(piezaActiva || piezasList.length > 0) && (
                 <button
                   onClick={() => {
                     if (cajasAsociadas > 0) {
-                      toast.success(`✅ ${idPieza.trim().toUpperCase()}: ${cajasAsociadas} caja${cajasAsociadas > 1 ? 's' : ''} asociada${cajasAsociadas > 1 ? 's' : ''}`, { duration: 3000 });
+                      toast.success(`✅ ${piezasList.length} pieza${piezasList.length > 1 ? 's' : ''}: ${cajasAsociadas} caja${cajasAsociadas > 1 ? 's' : ''} asociada${cajasAsociadas > 1 ? 's' : ''}`, { duration: 3000 });
                     }
-                    setIdCaja('');
-                    setIdPieza('');
-                    setPiezaActiva(false);
-                    setCajasAsociadas(0);
-                    setGrupoPaqueteActual('');
-                    inputPiezaRef.current?.focus();
+                    resetScaneo();
                   }}
                   className="px-4 py-3 bg-gray-500 hover:bg-gray-600 text-white rounded-xl font-semibold text-sm transition-colors whitespace-nowrap"
-                  title="Terminar pieza actual (o escanea 0000)"
+                  title="Reiniciar escaneo (o escanea 0000)"
                 >
-                  Siguiente pieza
+                  Reiniciar
                 </button>
               )}
               <button
                 onClick={registrar}
-                disabled={registrando || !idCaja.trim() || !idPieza.trim()}
+                disabled={registrando || !idCaja.trim() || piezasList.length === 0}
                 className="px-6 py-3 bg-green-600 hover:bg-green-700 disabled:bg-gray-300 text-white rounded-xl font-semibold text-lg transition-colors whitespace-nowrap flex items-center gap-2"
               >
                 {registrando ? '...' : <><PackageIcon className="w-5 h-5" /> Registrar</>}
@@ -1334,7 +1396,7 @@ function PaqueteriaContent() {
             </div>
           </div>
           <p className="text-xs text-gray-400 mt-2">
-            Escanea pieza → Enter → escanea cajas una a una → Enter cada una → escanea <span className="font-bold text-gray-500">0000</span> para pasar a la siguiente pieza
+            Escanea piezas una a una → Enter cada una → escanea <span className="font-bold text-gray-500">0000</span> para pasar a cajas → escanea cajas una a una → Enter cada una → escanea <span className="font-bold text-gray-500">0000</span> para terminar
           </p>
         </div>
         )}
@@ -2146,8 +2208,8 @@ function PaqueteriaContent() {
                             </div>
                           )}
 
-                          {/* Acciones rápidas: añadir/consumir (solo admin) */}
-                          {esAdmin && (
+                          {/* Acciones rápidas: añadir/consumir (solo admin, no en vista General) */}
+                          {esAdmin && !esVistaGeneral && (
                           <div className="mt-3 pt-3 border-t border-gray-200 flex flex-wrap items-center gap-3">
                             {/* Entrada de stock */}
                             <div className="flex items-center gap-1">

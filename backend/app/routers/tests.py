@@ -50,10 +50,14 @@ def _sse_event(event: str, data: dict) -> str:
     return f"event: {event}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n"
 
 
-def _count_tests_in_file(archivo: str) -> int:
-    """Cuenta tests rápido con collect-only."""
+def _count_tests_in_file(archivo: str) -> tuple[int, str | None]:
+    """Cuenta tests rápido con collect-only. Retorna (count, error_msg)."""
     test_path = os.path.join(TESTS_DIR, archivo)
     backend_dir = os.path.dirname(TESTS_DIR)
+
+    if not os.path.isfile(test_path):
+        return 0, f"Archivo no encontrado: {test_path}"
+
     try:
         proc = subprocess.run(
             [PYTHON_EXE, "-m", "pytest", test_path, "--collect-only", "-q", "-W", "ignore"],
@@ -62,10 +66,18 @@ def _count_tests_in_file(archivo: str) -> int:
         for line in proc.stdout.split("\n"):
             m = re.match(r"(\d+) tests? collected", line.strip())
             if m:
-                return int(m.group(1))
-    except Exception:
-        pass
-    return 0
+                return int(m.group(1)), None
+        # No tests collected — capture stderr for diagnostics
+        err = (proc.stderr or "").strip()
+        out = (proc.stdout or "").strip()
+        detail = err or out or f"pytest exit code {proc.returncode}"
+        return 0, f"0 tests recolectados: {detail[:500]}"
+    except FileNotFoundError:
+        return 0, f"pytest no encontrado (python: {PYTHON_EXE})"
+    except subprocess.TimeoutExpired:
+        return 0, "Timeout al recolectar tests (30s)"
+    except Exception as e:
+        return 0, f"Error: {e}"
 
 
 def _extract_test_descriptions(archivo: str) -> dict[str, str]:
@@ -99,14 +111,21 @@ def _run_suite_streaming(archivo: str, suite_id: str, suite_nombre: str):
 
     # Extraer descripciones y contar tests
     descriptions = _extract_test_descriptions(archivo)
-    total_expected = _count_tests_in_file(archivo)
+    total_expected, collect_error = _count_tests_in_file(archivo)
 
-    yield _sse_event("suite_start", {
+    suite_start_data = {
         "suite": suite_id,
         "nombre": suite_nombre,
         "archivo": archivo,
         "total_esperado": total_expected,
-    })
+        "tests_dir": TESTS_DIR,
+        "python_exe": PYTHON_EXE,
+        "archivo_existe": os.path.isfile(test_path),
+    }
+    if collect_error:
+        suite_start_data["collect_error"] = collect_error
+
+    yield _sse_event("suite_start", suite_start_data)
 
     cmd = [PYTHON_EXE, "-m", "pytest", test_path, "-v", "--tb=long", "-W", "ignore", "--no-header"]
 
@@ -178,6 +197,13 @@ def _run_suite_streaming(archivo: str, suite_id: str, suite_nombre: str):
         if capturing_failure:
             current_failure_block.append(line)
             continue
+
+        # Forward unmatched non-empty lines as log events (import errors, warnings, etc.)
+        stripped = line.strip()
+        if stripped and not re.match(r"^[-=]{3,}$", stripped) and not stripped.startswith("FAILED "):
+            # Check for collection errors or import errors
+            if "ERROR" in stripped or "ImportError" in stripped or "ModuleNotFoundError" in stripped or "No module named" in stripped:
+                yield _sse_event("log", {"tipo": "error", "mensaje": stripped})
 
         # Test result line: path::Class::method PASSED/FAILED/SKIPPED [XX%]
         m_test = re.match(

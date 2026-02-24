@@ -255,3 +255,208 @@ class TestPaqueteriaEstadisticas:
     def test_resumen_stock_cajas(self, client, auth_headers_admin, usuario_admin):
         response = client.get("/api/v1/paqueteria/tipos-caja/resumen", headers=auth_headers_admin)
         assert response.status_code == 200
+
+
+class TestBorrarRegistroPaquete:
+    """Tests para DELETE /api/v1/paqueteria/borrar/{id}"""
+
+    @pytest.mark.api
+    def test_borrar_registro_admin(self, client, auth_headers_admin, usuario_admin, registro_paquete_ejemplo):
+        """Admin puede borrar cualquier registro"""
+        response = client.delete(
+            f"/api/v1/paqueteria/borrar/{registro_paquete_ejemplo.id}",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+        assert "eliminado" in response.json()["message"].lower()
+
+    @pytest.mark.api
+    def test_borrar_registro_propio_hoy(self, client, auth_headers_user, usuario_normal, registro_paquete_ejemplo):
+        """User puede borrar su propio registro del día"""
+        response = client.delete(
+            f"/api/v1/paqueteria/borrar/{registro_paquete_ejemplo.id}",
+            headers=auth_headers_user,
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.api
+    def test_borrar_registro_no_existe(self, client, auth_headers_admin, usuario_admin):
+        response = client.delete(
+            "/api/v1/paqueteria/borrar/99999",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.api
+    def test_borrar_registro_sin_auth(self, client, registro_paquete_ejemplo):
+        response = client.delete(f"/api/v1/paqueteria/borrar/{registro_paquete_ejemplo.id}")
+        assert response.status_code in [401, 403]
+
+    @pytest.mark.api
+    def test_borrar_registro_devuelve_stock_caja(self, client, db_session, auth_headers_admin, usuario_admin, tipo_caja_ejemplo, sucursal_ejemplo, entorno_trabajo):
+        """Al borrar un registro, el stock de la caja se devuelve +1"""
+        from app.models.busqueda import RegistroPaquete
+        stock_antes = tipo_caja_ejemplo.stock_actual
+
+        registro = RegistroPaquete(
+            usuario_id=usuario_admin.id,
+            entorno_trabajo_id=entorno_trabajo.id,
+            sucursal_paqueteria_id=sucursal_ejemplo.id,
+            id_caja="CAJA-001",
+            id_pieza="TEST-DEVOLVER",
+        )
+        db_session.add(registro)
+        db_session.commit()
+        db_session.refresh(registro)
+
+        response = client.delete(
+            f"/api/v1/paqueteria/borrar/{registro.id}",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+
+        db_session.refresh(tipo_caja_ejemplo)
+        assert tipo_caja_ejemplo.stock_actual >= stock_antes
+
+
+class TestEditarRegistroPaquete:
+    """Tests para PUT /api/v1/paqueteria/editar/{id}"""
+
+    @pytest.mark.api
+    def test_editar_registro_admin(self, client, auth_headers_admin, usuario_admin, registro_paquete_ejemplo):
+        response = client.put(
+            f"/api/v1/paqueteria/editar/{registro_paquete_ejemplo.id}",
+            headers=auth_headers_admin,
+            json={"id_pieza": "PIEZA-EDITADA"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id_pieza"] == "PIEZA-EDITADA"
+
+    @pytest.mark.api
+    def test_editar_registro_cambiar_caja(self, client, auth_headers_admin, usuario_admin, registro_paquete_ejemplo):
+        response = client.put(
+            f"/api/v1/paqueteria/editar/{registro_paquete_ejemplo.id}",
+            headers=auth_headers_admin,
+            json={"id_caja": "CAJA-NUEVA"},
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["id_caja"] == "CAJA-NUEVA"
+
+    @pytest.mark.api
+    def test_editar_registro_no_existe(self, client, auth_headers_admin, usuario_admin):
+        response = client.put(
+            "/api/v1/paqueteria/editar/99999",
+            headers=auth_headers_admin,
+            json={"id_pieza": "X"},
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.api
+    def test_editar_registro_user_propio_hoy(self, client, auth_headers_user, usuario_normal, registro_paquete_ejemplo):
+        """User puede editar su propio registro del día"""
+        response = client.put(
+            f"/api/v1/paqueteria/editar/{registro_paquete_ejemplo.id}",
+            headers=auth_headers_user,
+            json={"id_pieza": "PIEZA-USER-EDIT"},
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.api
+    def test_editar_registro_sin_auth(self, client, registro_paquete_ejemplo):
+        response = client.put(
+            f"/api/v1/paqueteria/editar/{registro_paquete_ejemplo.id}",
+            json={"id_pieza": "X"},
+        )
+        assert response.status_code in [401, 403]
+
+
+class TestPaqueteriaDuplicados:
+    """Tests para validación de piezas duplicadas en paquetería"""
+
+    @pytest.mark.api
+    def test_registrar_pieza_duplicada_mismo_dia(self, client, auth_headers_user, usuario_normal, sucursal_ejemplo):
+        """No se puede registrar la misma pieza dos veces el mismo día"""
+        payload = {
+            "id_caja": "CAJA-DUP-01",
+            "id_pieza": "PIEZA-DUP-001",
+            "sucursal_id": sucursal_ejemplo.id,
+        }
+        r1 = client.post("/api/v1/paqueteria/registrar", headers=auth_headers_user, json=payload)
+        assert r1.status_code in [200, 201]
+
+        payload2 = {
+            "id_caja": "CAJA-DUP-02",
+            "id_pieza": "PIEZA-DUP-001",
+            "sucursal_id": sucursal_ejemplo.id,
+        }
+        r2 = client.post("/api/v1/paqueteria/registrar", headers=auth_headers_user, json=payload2)
+        assert r2.status_code == 409
+        assert "ya empaquetadas hoy" in r2.json()["detail"]
+
+    @pytest.mark.api
+    def test_registrar_pieza_duplicada_dentro_lote(self, client, auth_headers_user, usuario_normal, sucursal_ejemplo):
+        """No se puede enviar la misma pieza repetida dentro de una petición"""
+        payload = {
+            "id_caja": "CAJA-DUP-03",
+            "id_pieza": "PIEZA-INT-001, PIEZA-INT-001",
+            "sucursal_id": sucursal_ejemplo.id,
+        }
+        r = client.post("/api/v1/paqueteria/registrar", headers=auth_headers_user, json=payload)
+        assert r.status_code == 409
+        assert "duplicadas en la misma petición" in r.json()["detail"]
+
+    @pytest.mark.api
+    def test_registrar_pieza_multi_duplicada_parcial(self, client, auth_headers_user, usuario_normal, sucursal_ejemplo):
+        """Si se envían varias piezas y una ya existe hoy, se rechaza todo"""
+        # Registrar PIEZA-PARCIAL-A
+        r1 = client.post("/api/v1/paqueteria/registrar", headers=auth_headers_user, json={
+            "id_caja": "CAJA-DUP-04",
+            "id_pieza": "PIEZA-PARCIAL-A",
+            "sucursal_id": sucursal_ejemplo.id,
+        })
+        assert r1.status_code in [200, 201]
+
+        # Intentar registrar PIEZA-PARCIAL-B, PIEZA-PARCIAL-A (la A ya existe)
+        r2 = client.post("/api/v1/paqueteria/registrar", headers=auth_headers_user, json={
+            "id_caja": "CAJA-DUP-05",
+            "id_pieza": "PIEZA-PARCIAL-B, PIEZA-PARCIAL-A",
+            "sucursal_id": sucursal_ejemplo.id,
+        })
+        assert r2.status_code == 409
+        assert "PIEZA-PARCIAL-A" in r2.json()["detail"]
+
+    @pytest.mark.api
+    def test_registrar_piezas_distintas_ok(self, client, auth_headers_user, usuario_normal, sucursal_ejemplo):
+        """Piezas distintas se pueden registrar sin problemas"""
+        r1 = client.post("/api/v1/paqueteria/registrar", headers=auth_headers_user, json={
+            "id_caja": "CAJA-OK-01",
+            "id_pieza": "PIEZA-UNICA-A",
+            "sucursal_id": sucursal_ejemplo.id,
+        })
+        assert r1.status_code in [200, 201]
+
+        r2 = client.post("/api/v1/paqueteria/registrar", headers=auth_headers_user, json={
+            "id_caja": "CAJA-OK-02",
+            "id_pieza": "PIEZA-UNICA-B",
+            "sucursal_id": sucursal_ejemplo.id,
+        })
+        assert r2.status_code in [200, 201]
+
+    @pytest.mark.api
+    def test_registrar_pieza_case_insensitive(self, client, auth_headers_user, usuario_normal, sucursal_ejemplo):
+        """La detección de duplicados es case-insensitive"""
+        r1 = client.post("/api/v1/paqueteria/registrar", headers=auth_headers_user, json={
+            "id_caja": "CAJA-CI-01",
+            "id_pieza": "pieza-case-test",
+            "sucursal_id": sucursal_ejemplo.id,
+        })
+        assert r1.status_code in [200, 201]
+
+        r2 = client.post("/api/v1/paqueteria/registrar", headers=auth_headers_user, json={
+            "id_caja": "CAJA-CI-02",
+            "id_pieza": "PIEZA-CASE-TEST",
+            "sucursal_id": sucursal_ejemplo.id,
+        })
+        assert r2.status_code == 409

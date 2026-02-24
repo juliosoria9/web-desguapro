@@ -990,14 +990,14 @@ class TestHealthEndpoints:
 
     @pytest.mark.integration
     def test_docs(self, client):
-        """Accede a /docs (Swagger). Espera: 200."""
-        resp = client.get("/docs")
+        """Accede a /api/v1/docs (Swagger). Espera: 200."""
+        resp = client.get("/api/v1/docs")
         assert resp.status_code == 200
 
     @pytest.mark.integration
     def test_openapi_json(self, client):
-        """Accede a /openapi.json. Espera: 200 con paths."""
-        resp = client.get("/openapi.json")
+        """Accede a /api/v1/openapi.json. Espera: 200 con paths."""
+        resp = client.get("/api/v1/openapi.json")
         assert resp.status_code == 200
         data = resp.json()
         assert "paths" in data

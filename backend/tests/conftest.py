@@ -403,3 +403,86 @@ def pieza_vendida_ejemplo(db_session, entorno_trabajo) -> PiezaVendida:
     db_session.commit()
     db_session.refresh(vendida)
     return vendida
+
+
+# ============== FIXTURES DE CLIENTES ==============
+@pytest.fixture
+def cliente_ejemplo(db_session, entorno_trabajo, usuario_normal):
+    """Fixture para crear un cliente interesado de ejemplo"""
+    from app.models.busqueda import ClienteInteresado
+    cliente = ClienteInteresado(
+        entorno_trabajo_id=entorno_trabajo.id,
+        usuario_id=usuario_normal.id,
+        nombre="Juan Pérez",
+        telefono="600111222",
+        email="juan@example.com",
+        pieza_buscada="Motor arranque",
+        marca_coche="BMW",
+        modelo_coche="Serie 3",
+        anio_coche="2018",
+        estado="pendiente",
+    )
+    db_session.add(cliente)
+    db_session.commit()
+    db_session.refresh(cliente)
+    return cliente
+
+
+# ============== FIXTURES DE VEHÍCULOS ==============
+@pytest.fixture
+def vehiculo_ejemplo(db_session):
+    """Fixture para crear un vehículo de referencia de ejemplo"""
+    from app.models.busqueda import VehiculoReferencia
+    vehiculo = VehiculoReferencia(
+        marca="BMW",
+        modelo="SERIE 3",
+        rango_anios="2015-2020",
+        anios_produccion="2015, 2016, 2017, 2018, 2019, 2020",
+        tiene_serie=True,
+        tiene_deportiva=False,
+        precio_fatal_10=500.0,
+        precio_mal_13=650.0,
+        precio_regular_17=850.0,
+        precio_bien_23=1150.0,
+    )
+    db_session.add(vehiculo)
+    db_session.commit()
+    db_session.refresh(vehiculo)
+    return vehiculo
+
+
+# ============== FIXTURES DE REGISTROS PAQUETERÍA ==============
+@pytest.fixture
+def registro_paquete_ejemplo(db_session, usuario_normal, entorno_trabajo, sucursal_ejemplo):
+    """Fixture para crear un registro de paquetería de ejemplo"""
+    registro = RegistroPaquete(
+        usuario_id=usuario_normal.id,
+        entorno_trabajo_id=entorno_trabajo.id,
+        sucursal_paqueteria_id=sucursal_ejemplo.id,
+        id_caja="CAJA-001",
+        id_pieza="PIEZA-TEST-001",
+    )
+    db_session.add(registro)
+    db_session.commit()
+    db_session.refresh(registro)
+    return registro
+
+
+# ============== FIXTURES DE API LOGS ==============
+@pytest.fixture
+def api_log_ejemplo(db_session, usuario_admin, entorno_trabajo):
+    """Fixture para crear un log de API de ejemplo"""
+    log = APIRequestLog(
+        metodo="GET",
+        ruta="/api/v1/test",
+        status_code=200,
+        duracion_ms=50.0,
+        usuario_id=usuario_admin.id,
+        usuario_email=usuario_admin.email,
+        entorno_trabajo_id=entorno_trabajo.id,
+        ip_address="127.0.0.1",
+    )
+    db_session.add(log)
+    db_session.commit()
+    db_session.refresh(log)
+    return log

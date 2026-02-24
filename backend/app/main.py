@@ -40,6 +40,9 @@ app = FastAPI(
     version=settings.api_version,
     description="API para búsqueda de precios de piezas de automóvil - Con autenticación",
     lifespan=lifespan,
+    openapi_url="/api/v1/openapi.json",
+    docs_url="/api/v1/docs",
+    redoc_url="/api/v1/redoc",
 )
 
 # CORS middleware
@@ -113,7 +116,7 @@ async def root():
     """Root endpoint"""
     return {
         "message": "Bienvenido a DesguaPro API",
-        "docs": "/docs",
+        "docs": "/api/v1/docs",
         "version": settings.api_version,
         "auth": "Necesitas hacer login en /api/v1/auth/login",
     }

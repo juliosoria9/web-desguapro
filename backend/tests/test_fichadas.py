@@ -240,3 +240,197 @@ class TestEstadisticasFichadas:
         ).all()
         
         assert len(fichadas_hoy) >= 1
+
+
+class TestResumenDia:
+    """Tests para GET /api/v1/fichadas/resumen-dia"""
+
+    @pytest.mark.api
+    def test_resumen_dia_admin(self, client, auth_headers_admin, usuario_admin):
+        """Admin puede ver resumen del día"""
+        response = client.get(
+            "/api/v1/fichadas/resumen-dia",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "fecha" in data
+        assert "usuarios" in data
+        assert "total_general" in data
+
+    @pytest.mark.api
+    def test_resumen_dia_con_fecha(self, client, auth_headers_admin, usuario_admin):
+        """Resumen para una fecha específica"""
+        response = client.get(
+            "/api/v1/fichadas/resumen-dia?fecha=2026-01-15",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["fecha"] == "2026-01-15"
+
+    @pytest.mark.api
+    def test_resumen_dia_fecha_invalida(self, client, auth_headers_admin, usuario_admin):
+        response = client.get(
+            "/api/v1/fichadas/resumen-dia?fecha=no-es-fecha",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 400
+
+    @pytest.mark.api
+    def test_resumen_dia_user_forbidden(self, client, auth_headers_user, usuario_normal):
+        """User normal no puede ver resumen"""
+        response = client.get(
+            "/api/v1/fichadas/resumen-dia",
+            headers=auth_headers_user,
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.api
+    def test_resumen_dia_sysowner_con_entorno(self, client, auth_headers_sysowner, usuario_sysowner, entorno_trabajo):
+        """Sysowner puede filtrar por entorno_id"""
+        response = client.get(
+            f"/api/v1/fichadas/resumen-dia?entorno_id={entorno_trabajo.id}",
+            headers=auth_headers_sysowner,
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.api
+    def test_resumen_dia_con_fichadas(self, client, auth_headers_admin, usuario_admin, fichada_ejemplo):
+        """Resumen contiene datos cuando hay fichadas"""
+        response = client.get(
+            "/api/v1/fichadas/resumen-dia",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_general"] >= 1
+
+
+class TestSemanasDisponibles:
+    """Tests para GET /api/v1/fichadas/semanas-disponibles/{usuario_id}"""
+
+    @pytest.mark.api
+    def test_semanas_disponibles_admin(self, client, auth_headers_admin, usuario_admin, usuario_normal):
+        response = client.get(
+            f"/api/v1/fichadas/semanas-disponibles/{usuario_normal.id}",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "semanas" in data
+        assert len(data["semanas"]) > 0
+
+    @pytest.mark.api
+    def test_semanas_disponibles_cantidad(self, client, auth_headers_admin, usuario_admin, usuario_normal):
+        response = client.get(
+            f"/api/v1/fichadas/semanas-disponibles/{usuario_normal.id}?cantidad=4",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert len(data["semanas"]) == 4
+
+    @pytest.mark.api
+    def test_semanas_disponibles_formato(self, client, auth_headers_admin, usuario_admin, usuario_normal):
+        """Cada semana tiene semana, label, fecha_inicio, fecha_fin"""
+        response = client.get(
+            f"/api/v1/fichadas/semanas-disponibles/{usuario_normal.id}?cantidad=1",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+        semana = response.json()["semanas"][0]
+        assert "semana" in semana
+        assert "label" in semana
+        assert "fecha_inicio" in semana
+        assert "fecha_fin" in semana
+
+    @pytest.mark.api
+    def test_semanas_disponibles_user_forbidden(self, client, auth_headers_user, usuario_normal):
+        response = client.get(
+            f"/api/v1/fichadas/semanas-disponibles/{usuario_normal.id}",
+            headers=auth_headers_user,
+        )
+        assert response.status_code == 403
+
+
+class TestDetalleSemana:
+    """Tests para GET /api/v1/fichadas/detalle-semana/{usuario_id}"""
+
+    @pytest.mark.api
+    def test_detalle_semana_admin(self, client, auth_headers_admin, usuario_admin, usuario_normal):
+        response = client.get(
+            f"/api/v1/fichadas/detalle-semana/{usuario_normal.id}?semana=2026-W06",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert "dias" in data
+        assert len(data["dias"]) == 7
+        assert "total_semana" in data
+        assert "promedio_diario" in data
+
+    @pytest.mark.api
+    def test_detalle_semana_formato_dia(self, client, auth_headers_admin, usuario_admin, usuario_normal):
+        """Cada día tiene fecha, dia_semana, total_fichadas"""
+        response = client.get(
+            f"/api/v1/fichadas/detalle-semana/{usuario_normal.id}?semana=2026-W06",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+        dia = response.json()["dias"][0]
+        assert "fecha" in dia
+        assert "dia_semana" in dia
+        assert "total_fichadas" in dia
+
+    @pytest.mark.api
+    def test_detalle_semana_usuario_no_existe(self, client, auth_headers_admin, usuario_admin):
+        response = client.get(
+            "/api/v1/fichadas/detalle-semana/99999?semana=2026-W06",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.api
+    def test_detalle_semana_user_forbidden(self, client, auth_headers_user, usuario_normal):
+        response = client.get(
+            f"/api/v1/fichadas/detalle-semana/{usuario_normal.id}?semana=2026-W06",
+            headers=auth_headers_user,
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.api
+    def test_detalle_semana_con_fichadas(self, client, db_session, auth_headers_admin, usuario_admin, usuario_normal, entorno_trabajo):
+        """Detalle muestra datos cuando hay fichadas en la semana actual"""
+        from app.models.busqueda import FichadaPieza
+        from datetime import date, timedelta
+        hoy = date.today()
+        inicio_semana = hoy - timedelta(days=hoy.weekday())
+        num_semana = inicio_semana.isocalendar()[1]
+        semana_str = f"{inicio_semana.year}-W{num_semana:02d}"
+
+        for i in range(3):
+            f = FichadaPieza(
+                usuario_id=usuario_normal.id,
+                entorno_trabajo_id=entorno_trabajo.id,
+                id_pieza=f"SEM-{i}",
+            )
+            db_session.add(f)
+        db_session.commit()
+
+        response = client.get(
+            f"/api/v1/fichadas/detalle-semana/{usuario_normal.id}?semana={semana_str}",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["total_semana"] >= 3
+
+    @pytest.mark.api
+    def test_detalle_semana_sysowner_entorno(self, client, auth_headers_sysowner, usuario_sysowner, usuario_normal, entorno_trabajo):
+        """Sysowner puede filtrar por entorno_id"""
+        response = client.get(
+            f"/api/v1/fichadas/detalle-semana/{usuario_normal.id}?semana=2026-W06&entorno_id={entorno_trabajo.id}",
+            headers=auth_headers_sysowner,
+        )
+        assert response.status_code == 200

@@ -45,6 +45,15 @@ class RegistroPaqueteCreate(BaseModel):
     grupo_paquete: Optional[str] = None
 
 
+class RegistroPaqueteLoteCreate(BaseModel):
+    """Request para registrar una caja con múltiples piezas a la vez"""
+    id_caja: str = Field(..., min_length=1)
+    id_piezas: list[str] = Field(..., min_length=1)
+    entorno_id: Optional[int] = None
+    sucursal_id: Optional[int] = None
+    grupo_paquete: Optional[str] = None
+
+
 class RegistroPaqueteUpdate(BaseModel):
     """Request para editar un registro existente"""
     id_caja: Optional[str] = None

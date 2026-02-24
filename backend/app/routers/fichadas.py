@@ -283,7 +283,7 @@ def calcular_color_tiempo(minutos: Optional[int]) -> str:
     """Calcula el color según los minutos transcurridos"""
     if minutos is None:
         return "gray"
-    if minutos <= 5:
+    if minutos <= 8:
         return "green"
     elif minutos <= 15:
         return "yellow"

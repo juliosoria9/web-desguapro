@@ -239,6 +239,9 @@ export default function TestsSysownerPage() {
 
       case 'suite_start':
         addLog('info', `▶ Suite: ${data.nombre} (${data.total_esperado} tests)`);
+        if (data.collect_error) {
+          addLog('error', `⚠ ${data.nombre}: ${data.collect_error}`);
+        }
         setPytestResults(prev => ({
           ...prev,
           [data.suite]: {
@@ -343,6 +346,10 @@ export default function TestsSysownerPage() {
         addLog('error', data.mensaje || 'Error desconocido');
         toast.error(data.mensaje || 'Error desconocido');
         break;
+
+      case 'log':
+        addLog(data.tipo === 'error' ? 'error' : 'info', data.mensaje || '');
+        break;
     }
   }
 
@@ -436,9 +443,9 @@ export default function TestsSysownerPage() {
         id: 'openapi',
         nombre: 'OpenAPI disponible',
         metodo: 'GET',
-        endpoint: '/openapi.json',
+        endpoint: '/api/v1/openapi.json',
         run: async () => {
-          const res = await axios.get(`${API_URL}/openapi.json`, { timeout: 15000, withCredentials: true });
+          const res = await axios.get(`${API_URL}/api/v1/openapi.json`, { timeout: 15000, withCredentials: true });
           expect(res.status === 200, `HTTP ${res.status}`);
           expect(!!res.data?.paths, 'OpenAPI sin paths');
         },

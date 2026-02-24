@@ -271,3 +271,191 @@ class TestPasswordSecurity:
         
         assert verify_password(password, hash1) == True
         assert verify_password(password, hash2) == True
+
+
+class TestVerPasswordUsuario:
+    """Tests para GET /api/v1/auth/usuarios/{id}/password"""
+
+    @pytest.mark.api
+    def test_ver_password_admin_ve_user(self, client, db_session, auth_headers_admin, usuario_admin, usuario_normal):
+        """Admin puede ver password de user de menor rango"""
+        # Guardar password_plain para que el endpoint lo encuentre
+        usuario_normal.password_plain = "test123"
+        db_session.commit()
+
+        response = client.get(
+            f"/api/v1/auth/usuarios/{usuario_normal.id}/password",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+        assert response.json()["password"] == "test123"
+
+    @pytest.mark.api
+    def test_ver_password_user_no_puede(self, client, auth_headers_user, usuario_normal, usuario_admin):
+        """User normal no tiene acceso (no es admin+)"""
+        response = client.get(
+            f"/api/v1/auth/usuarios/{usuario_admin.id}/password",
+            headers=auth_headers_user,
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.api
+    def test_ver_password_mismo_rango_denegado(self, client, db_session, auth_headers_admin, usuario_admin):
+        """Admin no puede ver password de otro admin"""
+        from app.models.busqueda import Usuario
+        from utils.security import hash_password
+        otro_admin = Usuario(
+            email="admin2@test.com",
+            nombre="Admin2",
+            password_hash=hash_password("pass2"),
+            password_plain="pass2",
+            rol="admin",
+            activo=True,
+            entorno_trabajo_id=usuario_admin.entorno_trabajo_id,
+        )
+        db_session.add(otro_admin)
+        db_session.commit()
+        db_session.refresh(otro_admin)
+
+        response = client.get(
+            f"/api/v1/auth/usuarios/{otro_admin.id}/password",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.api
+    def test_ver_password_usuario_no_existe(self, client, auth_headers_admin, usuario_admin):
+        response = client.get(
+            "/api/v1/auth/usuarios/99999/password",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.api
+    def test_ver_password_sin_password_plain(self, client, auth_headers_admin, usuario_admin, usuario_normal):
+        """Si no hay password_plain almacenada, devuelve 404"""
+        response = client.get(
+            f"/api/v1/auth/usuarios/{usuario_normal.id}/password",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.api
+    def test_ver_password_propio(self, client, db_session, auth_headers_admin, usuario_admin):
+        """Un usuario puede ver su propia password"""
+        usuario_admin.password_plain = "test123"
+        db_session.commit()
+
+        response = client.get(
+            f"/api/v1/auth/usuarios/{usuario_admin.id}/password",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 200
+
+    @pytest.mark.api
+    def test_ver_password_admin_otro_entorno(self, client, db_session, auth_headers_admin, usuario_admin):
+        """Admin no puede ver password de user de otro entorno"""
+        from app.models.busqueda import Usuario, EntornoTrabajo
+        from utils.security import hash_password
+        otro_ent = EntornoTrabajo(nombre="Otro", activo=True)
+        db_session.add(otro_ent)
+        db_session.commit()
+        db_session.refresh(otro_ent)
+
+        user_otro = Usuario(
+            email="otro@test.com",
+            nombre="Otro User",
+            password_hash=hash_password("pass"),
+            password_plain="pass",
+            rol="user",
+            activo=True,
+            entorno_trabajo_id=otro_ent.id,
+        )
+        db_session.add(user_otro)
+        db_session.commit()
+        db_session.refresh(user_otro)
+
+        response = client.get(
+            f"/api/v1/auth/usuarios/{user_otro.id}/password",
+            headers=auth_headers_admin,
+        )
+        assert response.status_code == 403
+
+
+class TestEliminarEntorno:
+    """Tests para DELETE /api/v1/auth/entornos/{id}"""
+
+    @pytest.mark.api
+    def test_eliminar_entorno_sysowner(self, client, db_session, auth_headers_sysowner, usuario_sysowner):
+        """Sysowner puede eliminar un entorno"""
+        from app.models.busqueda import EntornoTrabajo
+        nuevo_ent = EntornoTrabajo(nombre="Para borrar", activo=True)
+        db_session.add(nuevo_ent)
+        db_session.commit()
+        db_session.refresh(nuevo_ent)
+
+        response = client.delete(
+            f"/api/v1/auth/entornos/{nuevo_ent.id}",
+            headers=auth_headers_sysowner,
+        )
+        assert response.status_code == 200
+        assert "eliminado" in response.json()["message"].lower() or "Para borrar" in response.json()["message"]
+
+    @pytest.mark.api
+    def test_eliminar_entorno_cascade_users(self, client, db_session, auth_headers_sysowner, usuario_sysowner):
+        """Eliminar entorno borra sus usuarios (no sysowner)"""
+        from app.models.busqueda import EntornoTrabajo, Usuario
+        from utils.security import hash_password
+        ent = EntornoTrabajo(nombre="Con users", activo=True)
+        db_session.add(ent)
+        db_session.commit()
+        db_session.refresh(ent)
+
+        u = Usuario(
+            email="delme@test.com",
+            nombre="Delete Me",
+            password_hash=hash_password("x"),
+            rol="user",
+            activo=True,
+            entorno_trabajo_id=ent.id,
+        )
+        db_session.add(u)
+        db_session.commit()
+
+        response = client.delete(
+            f"/api/v1/auth/entornos/{ent.id}",
+            headers=auth_headers_sysowner,
+        )
+        assert response.status_code == 200
+        assert "1" in response.json()["message"]
+
+    @pytest.mark.api
+    def test_eliminar_entorno_owner_forbidden(self, client, db_session, auth_headers_owner, usuario_owner):
+        """Owner no puede eliminar entornos"""
+        from app.models.busqueda import EntornoTrabajo
+        ent = EntornoTrabajo(nombre="No borrar", activo=True)
+        db_session.add(ent)
+        db_session.commit()
+        db_session.refresh(ent)
+
+        response = client.delete(
+            f"/api/v1/auth/entornos/{ent.id}",
+            headers=auth_headers_owner,
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.api
+    def test_eliminar_entorno_no_existe(self, client, auth_headers_sysowner, usuario_sysowner):
+        response = client.delete(
+            "/api/v1/auth/entornos/99999",
+            headers=auth_headers_sysowner,
+        )
+        assert response.status_code == 404
+
+    @pytest.mark.api
+    def test_eliminar_entorno_user_forbidden(self, client, auth_headers_user, usuario_normal):
+        response = client.delete(
+            "/api/v1/auth/entornos/1",
+            headers=auth_headers_user,
+        )
+        assert response.status_code == 403
