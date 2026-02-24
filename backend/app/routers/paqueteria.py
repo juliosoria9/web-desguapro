@@ -5,7 +5,7 @@ Accesible para todos los usuarios del entorno
 """
 from fastapi import APIRouter, Depends, HTTPException, status, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc, String
+from sqlalchemy import func, desc, or_, String
 from typing import Optional
 from datetime import datetime, date, timedelta
 import logging
@@ -243,15 +243,24 @@ async def registrar_paquete(
         )
 
     # Duplicados contra registros del mismo día y entorno
+    # Si viene grupo_paquete, excluir registros del mismo grupo (multi-caja por pieza)
     hoy = now_spain_naive().date()
-    registros_hoy = (
+    query_hoy = (
         db.query(RegistroPaquete.id_pieza)
         .filter(
             RegistroPaquete.entorno_trabajo_id == entorno_id,
             func.date(RegistroPaquete.fecha_registro) == hoy,
         )
-        .all()
     )
+    if datos.grupo_paquete:
+        query_hoy = query_hoy.filter(
+            or_(
+                RegistroPaquete.grupo_paquete == None,
+                RegistroPaquete.grupo_paquete != datos.grupo_paquete,
+            )
+        )
+    registros_hoy = query_hoy.all()
+
     ids_empaquetados_hoy: set[str] = set()
     for (campo_pieza,) in registros_hoy:
         if campo_pieza:
