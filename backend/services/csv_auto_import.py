@@ -16,7 +16,7 @@ from typing import Optional, Dict, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import SessionLocal
-from app.models.busqueda import BaseDesguace, PiezaDesguace, PiezaVendida, EntornoTrabajo, PiezaPedida
+from app.models.busqueda import BaseDesguace, PiezaDesguace, PiezaVendida, EntornoTrabajo, PiezaPedida, FichadaPieza
 from utils.timezone import now_spain_naive
 
 # Configurar logging
@@ -395,7 +395,36 @@ def importar_csv_motocoche(csv_path: str = CSV_PATH) -> Dict:
         
         # Insertar nuevas piezas
         db.bulk_save_objects(piezas_nuevas)
-        
+        db.flush()
+
+        # ========== RESTAURAR FICHAJES EN PIEZAS ==========
+        # Cruzar piezas sin fichaje con la tabla fichadas_piezas
+        fichadas_por_refid = {}
+        todas_fichadas = db.query(FichadaPieza).filter(
+            FichadaPieza.entorno_trabajo_id == entorno_id
+        ).all()
+        for f in todas_fichadas:
+            refid_upper = f.id_pieza.strip().upper() if f.id_pieza else None
+            if refid_upper:
+                if refid_upper not in fichadas_por_refid or f.fecha_fichada > fichadas_por_refid[refid_upper].fecha_fichada:
+                    fichadas_por_refid[refid_upper] = f
+
+        piezas_fichaje_restaurado = 0
+        for pieza in db.query(PiezaDesguace).filter(
+            PiezaDesguace.base_desguace_id == base.id,
+            PiezaDesguace.usuario_fichaje_id.is_(None)
+        ).all():
+            if pieza.refid:
+                refid_upper = pieza.refid.strip().upper()
+                if refid_upper in fichadas_por_refid:
+                    fichada = fichadas_por_refid[refid_upper]
+                    pieza.fecha_fichaje = fichada.fecha_fichada
+                    pieza.usuario_fichaje_id = fichada.usuario_id
+                    piezas_fichaje_restaurado += 1
+
+        if piezas_fichaje_restaurado > 0:
+            logger.info(f"Fichajes restaurados en {piezas_fichaje_restaurado} piezas")
+
         # ========== MARCAR PIEZAS PEDIDAS COMO RECIBIDAS ==========
         # Si hay nuevas piezas, verificar si alguna estaba en la lista de pedidas
         piezas_recibidas = 0
@@ -594,7 +623,35 @@ def importar_csv_con_configuracion(
         
         # Insertar nuevas piezas
         db.bulk_save_objects(piezas_nuevas)
-        
+        db.flush()
+
+        # ========== RESTAURAR FICHAJES EN PIEZAS ==========
+        fichadas_por_refid = {}
+        todas_fichadas = db.query(FichadaPieza).filter(
+            FichadaPieza.entorno_trabajo_id == entorno_trabajo_id
+        ).all()
+        for f in todas_fichadas:
+            refid_upper = f.id_pieza.strip().upper() if f.id_pieza else None
+            if refid_upper:
+                if refid_upper not in fichadas_por_refid or f.fecha_fichada > fichadas_por_refid[refid_upper].fecha_fichada:
+                    fichadas_por_refid[refid_upper] = f
+
+        piezas_fichaje_restaurado = 0
+        for pieza in db.query(PiezaDesguace).filter(
+            PiezaDesguace.base_desguace_id == base.id,
+            PiezaDesguace.usuario_fichaje_id.is_(None)
+        ).all():
+            if pieza.refid:
+                refid_upper = pieza.refid.strip().upper()
+                if refid_upper in fichadas_por_refid:
+                    fichada = fichadas_por_refid[refid_upper]
+                    pieza.fecha_fichaje = fichada.fecha_fichada
+                    pieza.usuario_fichaje_id = fichada.usuario_id
+                    piezas_fichaje_restaurado += 1
+
+        if piezas_fichaje_restaurado > 0:
+            logger.info(f"Fichajes restaurados en {piezas_fichaje_restaurado} piezas")
+
         # ========== MARCAR PIEZAS PEDIDAS COMO RECIBIDAS ==========
         piezas_recibidas = 0
         if piezas_nuevas:
