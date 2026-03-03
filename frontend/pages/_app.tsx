@@ -43,7 +43,7 @@ export default function App({ Component, pageProps }: AppProps) {
         <link rel="apple-touch-icon" href="/icono.png" />
       </Head>
       <Component {...pageProps} />
-      <div className="fixed bottom-4 right-4 z-[9999]">
+      <div className="fixed bottom-4 left-4 z-[9999]">
         <div className="w-10 h-10 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 flex items-center justify-center">
           <ThemeToggle />
         </div>
