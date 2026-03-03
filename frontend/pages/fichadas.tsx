@@ -945,6 +945,12 @@ function FichadasContent() {
                                     >
                                       {fichada.id_pieza}
                                     </span>
+                                    {/* Descripción del usuario si existe */}
+                                    {fichada.descripcion && (
+                                      <span className="text-xs text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200 truncate max-w-[180px]" title={fichada.descripcion}>
+                                        📝 {fichada.descripcion}
+                                      </span>
+                                    )}
                                     {/* Artículo y coche si existe */}
                                     {fichada.en_stock && fichada.articulo && (
                                       <span className="text-sm text-gray-700 flex-1 truncate" title={`${fichada.articulo} - ${fichada.marca} ${fichada.modelo}`}>
@@ -956,7 +962,7 @@ function FichadasContent() {
                                         )}
                                       </span>
                                     )}
-                                    {/* Espacio flexible si no hay datos */}
+                                    {/* Espacio flexible si no hay artículo */}
                                     {(!fichada.en_stock || !fichada.articulo) && <span className="flex-1" />}
                                     {/* Indicador de stock */}
                                     <span className="w-6 text-center" title={
