@@ -8,6 +8,14 @@
   box-sizing: border-box;
 }
 
+html {
+  transition: background-color 0.2s, color 0.2s;
+}
+
+html.dark {
+  color-scheme: dark;
+}
+
 html,
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
@@ -21,3 +29,198 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+/* Dark mode: form elements */
+.dark input,
+.dark select,
+.dark textarea {
+  background-color: rgb(55 65 81);
+  border-color: rgb(75 85 99);
+  color: rgb(243 244 246);
+}
+
+.dark input::placeholder,
+.dark textarea::placeholder {
+  color: rgb(156 163 175);
+}
+
+.dark input:focus,
+.dark select:focus,
+.dark textarea:focus {
+  border-color: rgb(96 165 250);
+}
+
+/* Dark mode: scrollbar */
+.dark ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.dark ::-webkit-scrollbar-track {
+  background: rgb(31 41 55);
+}
+.dark ::-webkit-scrollbar-thumb {
+  background: rgb(75 85 99);
+  border-radius: 4px;
+}
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgb(107 114 128);
+}
+
+/* ===================================================
+   Dark mode: global Tailwind utility overrides
+   Specificity: html.dark .class > .class
+   =================================================== */
+
+/* --- Backgrounds (gray spectrum) --- */
+html.dark .bg-white { background-color: rgb(31 41 55); }
+html.dark .bg-gray-50 { background-color: rgb(17 24 39); }
+html.dark .bg-gray-100 { background-color: rgb(17 24 39); }
+html.dark .bg-gray-200 { background-color: rgb(55 65 81); }
+
+/* --- Borders (gray spectrum) --- */
+html.dark .border-gray-100 { border-color: rgb(55 65 81); }
+html.dark .border-gray-200 { border-color: rgb(55 65 81); }
+html.dark .border-gray-300 { border-color: rgb(75 85 99); }
+
+/* --- Text (gray spectrum) --- */
+html.dark .text-gray-900 { color: rgb(243 244 246); }
+html.dark .text-gray-800 { color: rgb(229 231 235); }
+html.dark .text-gray-700 { color: rgb(209 213 219); }
+html.dark .text-gray-600 { color: rgb(156 163 175); }
+html.dark .text-gray-500 { color: rgb(156 163 175); }
+html.dark .text-gray-400 { color: rgb(107 114 128); }
+
+/* --- Placeholder --- */
+html.dark .placeholder-gray-400::placeholder { color: rgb(107 114 128); }
+html.dark .placeholder-gray-500::placeholder { color: rgb(107 114 128); }
+
+/* --- Shadows --- */
+html.dark .shadow-lg { box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.4), 0 4px 6px -4px rgb(0 0 0 / 0.3); }
+html.dark .shadow-md { box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.4), 0 2px 4px -2px rgb(0 0 0 / 0.3); }
+html.dark .shadow-sm { box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.3); }
+html.dark .shadow { box-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.3); }
+
+/* --- Hover backgrounds (gray) --- */
+html.dark .hover\:bg-gray-50:hover { background-color: rgb(31 41 55); }
+html.dark .hover\:bg-gray-100:hover { background-color: rgb(55 65 81); }
+html.dark .hover\:bg-gray-200:hover { background-color: rgb(75 85 99); }
+
+/* --- Hover borders (gray) --- */
+html.dark .hover\:border-gray-300:hover { border-color: rgb(75 85 99); }
+html.dark .hover\:border-gray-400:hover { border-color: rgb(107 114 128); }
+
+/* --- Hover text (gray) --- */
+html.dark .hover\:text-gray-900:hover { color: rgb(243 244 246); }
+html.dark .hover\:text-gray-800:hover { color: rgb(229 231 235); }
+html.dark .hover\:text-gray-700:hover { color: rgb(209 213 219); }
+
+/* --- Divide (gray) --- */
+html.dark .divide-gray-200 > * + * { border-color: rgb(55 65 81); }
+html.dark .divide-gray-100 > * + * { border-color: rgb(55 65 81); }
+
+/* --- Ring (gray) --- */
+html.dark .ring-gray-200 { --tw-ring-color: rgb(55 65 81); }
+html.dark .ring-gray-300 { --tw-ring-color: rgb(75 85 99); }
+
+/* --- Colored light backgrounds (-50, -100) → dark tinted --- */
+html.dark .bg-blue-50 { background-color: rgb(30 58 138 / 0.25); }
+html.dark .bg-blue-100 { background-color: rgb(30 58 138 / 0.35); }
+html.dark .bg-teal-50 { background-color: rgb(19 78 74 / 0.25); }
+html.dark .bg-orange-50 { background-color: rgb(124 45 18 / 0.25); }
+html.dark .bg-orange-100 { background-color: rgb(124 45 18 / 0.35); }
+html.dark .bg-indigo-50 { background-color: rgb(49 46 129 / 0.25); }
+html.dark .bg-emerald-50 { background-color: rgb(6 78 59 / 0.25); }
+html.dark .bg-green-50 { background-color: rgb(20 83 45 / 0.25); }
+html.dark .bg-green-100 { background-color: rgb(20 83 45 / 0.35); }
+html.dark .bg-cyan-50 { background-color: rgb(22 78 99 / 0.25); }
+html.dark .bg-amber-50 { background-color: rgb(120 53 15 / 0.25); }
+html.dark .bg-amber-100 { background-color: rgb(120 53 15 / 0.35); }
+html.dark .bg-purple-50 { background-color: rgb(88 28 135 / 0.25); }
+html.dark .bg-pink-50 { background-color: rgb(131 24 67 / 0.25); }
+html.dark .bg-violet-50 { background-color: rgb(76 29 149 / 0.25); }
+html.dark .bg-slate-100 { background-color: rgb(51 65 85 / 0.4); }
+html.dark .bg-red-50 { background-color: rgb(127 29 29 / 0.2); }
+html.dark .bg-red-100 { background-color: rgb(127 29 29 / 0.3); }
+html.dark .bg-yellow-50 { background-color: rgb(113 63 18 / 0.25); }
+html.dark .bg-yellow-100 { background-color: rgb(113 63 18 / 0.35); }
+
+/* --- Hover colored light backgrounds --- */
+html.dark .hover\:bg-blue-50:hover { background-color: rgb(30 58 138 / 0.3); }
+html.dark .hover\:bg-blue-100:hover { background-color: rgb(30 58 138 / 0.4); }
+html.dark .hover\:bg-red-50:hover { background-color: rgb(127 29 29 / 0.3); }
+html.dark .hover\:bg-green-50:hover { background-color: rgb(20 83 45 / 0.3); }
+html.dark .hover\:bg-green-100:hover { background-color: rgb(20 83 45 / 0.4); }
+html.dark .hover\:bg-teal-100:hover { background-color: rgb(19 78 74 / 0.4); }
+html.dark .hover\:bg-orange-100:hover { background-color: rgb(124 45 18 / 0.4); }
+html.dark .hover\:bg-amber-100:hover { background-color: rgb(120 53 15 / 0.4); }
+
+/* --- Colored borders (alerts, badges) --- */
+html.dark .border-red-200 { border-color: rgb(153 27 27 / 0.5); }
+html.dark .border-red-300 { border-color: rgb(153 27 27 / 0.6); }
+html.dark .border-green-200 { border-color: rgb(22 101 52 / 0.5); }
+html.dark .border-green-300 { border-color: rgb(22 101 52 / 0.6); }
+html.dark .border-green-400 { border-color: rgb(34 197 94 / 0.5); }
+html.dark .border-green-500 { border-color: rgb(34 197 94 / 0.6); }
+html.dark .border-yellow-200 { border-color: rgb(133 77 14 / 0.5); }
+html.dark .border-blue-200 { border-color: rgb(30 64 175 / 0.4); }
+html.dark .border-blue-300 { border-color: rgb(30 64 175 / 0.5); }
+html.dark .border-blue-400 { border-color: rgb(59 130 246 / 0.5); }
+html.dark .border-blue-500 { border-color: rgb(59 130 246 / 0.6); }
+html.dark .border-amber-200 { border-color: rgb(146 64 14 / 0.5); }
+html.dark .border-amber-300 { border-color: rgb(146 64 14 / 0.6); }
+
+/* --- Colored dark text (hard to read on dark bg) --- */
+html.dark .text-red-800 { color: rgb(252 165 165); }
+html.dark .text-red-700 { color: rgb(252 165 165); }
+html.dark .text-red-900 { color: rgb(252 165 165); }
+html.dark .text-green-800 { color: rgb(134 239 172); }
+html.dark .text-green-700 { color: rgb(134 239 172); }
+html.dark .text-yellow-800 { color: rgb(253 224 71); }
+html.dark .text-yellow-700 { color: rgb(253 224 71); }
+html.dark .text-blue-800 { color: rgb(147 197 253); }
+html.dark .text-blue-700 { color: rgb(147 197 253); }
+html.dark .text-blue-900 { color: rgb(191 219 254); }
+html.dark .text-orange-800 { color: rgb(253 186 116); }
+html.dark .text-orange-700 { color: rgb(253 186 116); }
+html.dark .text-amber-700 { color: rgb(252 211 77); }
+html.dark .text-amber-800 { color: rgb(252 211 77); }
+html.dark .text-purple-800 { color: rgb(216 180 254); }
+html.dark .text-purple-700 { color: rgb(216 180 254); }
+html.dark .text-cyan-800 { color: rgb(103 232 249); }
+html.dark .text-pink-800 { color: rgb(249 168 212); }
+
+/* --- Additional colored backgrounds (-100) --- */
+html.dark .bg-purple-100 { background-color: rgb(88 28 135 / 0.35); }
+html.dark .bg-cyan-100 { background-color: rgb(22 78 99 / 0.35); }
+html.dark .bg-pink-100 { background-color: rgb(131 24 67 / 0.35); }
+
+/* --- Additional colored borders --- */
+html.dark .border-purple-300 { border-color: rgb(147 51 234 / 0.5); }
+html.dark .border-cyan-300 { border-color: rgb(6 182 212 / 0.5); }
+html.dark .border-pink-300 { border-color: rgb(236 72 153 / 0.5); }
+
+/* --- Disabled/secondary button backgrounds --- */
+html.dark .disabled\:bg-gray-300:disabled { background-color: rgb(55 65 81); }
+html.dark .bg-gray-300 { background-color: rgb(55 65 81); }
+html.dark .bg-gray-500 { background-color: rgb(75 85 99); }
+html.dark .hover\:bg-gray-600:hover { background-color: rgb(107 114 128); }
+
+/* --- Focus ring overrides --- */
+html.dark .focus\:ring-blue-500:focus { --tw-ring-color: rgb(59 130 246); }
+html.dark .focus\:border-blue-500:focus { border-color: rgb(59 130 246); }
+html.dark .focus\:border-green-500:focus { border-color: rgb(34 197 94); }
+html.dark .focus\:ring-green-500:focus { --tw-ring-color: rgb(34 197 94); }
+
+/* --- Prose content (dangerouslySetInnerHTML) --- */
+html.dark .prose { color: rgb(209 213 219); }
+html.dark .prose strong { color: rgb(243 244 246); }
+html.dark .prose h1, html.dark .prose h2, html.dark .prose h3, html.dark .prose h4 { color: rgb(243 244 246); }
+html.dark .prose a { color: rgb(96 165 250); }
+html.dark .prose code { color: rgb(167 139 250); }
+html.dark .prose blockquote { color: rgb(156 163 175); border-color: rgb(75 85 99); }
+html.dark .prose hr { border-color: rgb(55 65 81); }
+html.dark .prose li::marker { color: rgb(107 114 128); }
+
+/* --- Gradient text overrides --- */
+html.dark .from-gray-900 { --tw-gradient-from: rgb(243 244 246); }
+html.dark .to-gray-600 { --tw-gradient-to: rgb(156 163 175); }

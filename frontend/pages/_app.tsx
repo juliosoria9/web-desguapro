@@ -3,8 +3,15 @@ import Head from 'next/head';
 import { Toaster } from 'react-hot-toast';
 import '../styles/globals.css';
 import { useEffect } from 'react';
+import { useThemeStore } from '@/lib/theme-store';
+import ThemeToggle from '@/components/ThemeToggle';
 
 export default function App({ Component, pageProps }: AppProps) {
+  const loadTheme = useThemeStore((s) => s.load);
+
+  useEffect(() => {
+    loadTheme();
+  }, [loadTheme]);
   // Limpiar cualquier Service Worker residual
   useEffect(() => {
     if (typeof window !== 'undefined' && 'serviceWorker' in navigator) {
@@ -36,6 +43,11 @@ export default function App({ Component, pageProps }: AppProps) {
         <link rel="apple-touch-icon" href="/icono.png" />
       </Head>
       <Component {...pageProps} />
+      <div className="fixed bottom-4 right-4 z-[9999]">
+        <div className="w-10 h-10 rounded-full bg-white dark:bg-gray-800 shadow-lg border border-gray-200 dark:border-gray-700 flex items-center justify-center">
+          <ThemeToggle />
+        </div>
+      </div>
       <Toaster
         position="bottom-right"
         reverseOrder={false}

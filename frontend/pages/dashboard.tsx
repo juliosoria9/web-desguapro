@@ -45,8 +45,8 @@ export default function DashboardPage() {
     router.push('/login');
   };
 
-  const isAdmin = user.rol === 'sysowner' || user.rol === 'admin' || user.rol === 'owner';
-  const isSysowner = user.rol === 'sysowner';
+  const isAdmin = user?.rol === 'sysowner' || user?.rol === 'admin' || user?.rol === 'owner';
+  const isSysowner = user?.rol === 'sysowner';
 
   const fechaHoy = new Date().toLocaleDateString('es-ES', {
     weekday: 'long',
