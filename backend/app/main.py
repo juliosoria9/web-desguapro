@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 import logging
 
 from app.config import settings
-from app.routers import precios, stock, plataformas, token, auth, desguace, precios_config, referencias, fichadas, ebay, admin, piezas, stockeo, tickets, anuncios, paqueteria, tests, clientes, vehiculos
+from app.routers import precios, stock, plataformas, token, auth, desguace, precios_config, referencias, fichadas, ebay, admin, piezas, stockeo, tickets, anuncios, paqueteria, tests, clientes, vehiculos, despiece
 from services.scheduler import iniciar_scheduler, detener_scheduler
 from app.middleware.request_logger import RequestLoggerMiddleware
 from app.database import engine
@@ -87,6 +87,9 @@ app.include_router(anuncios.router, prefix="/api/v1/anuncios", tags=["anuncios"]
 
 # Paquetería y envíos
 app.include_router(paqueteria.router, prefix="/api/v1/paqueteria", tags=["paquetería"])
+
+# Despiece de piezas
+app.include_router(despiece.router, prefix="/api/v1/despiece", tags=["despiece"])
 
 # Clientes interesados (Ventas)
 app.include_router(clientes.router, prefix="/api/v1/clientes", tags=["clientes"])

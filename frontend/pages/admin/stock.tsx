@@ -24,6 +24,7 @@ interface PiezaStock {
   fecha_creacion: string | null;
   fecha_fichaje: string | null;
   usuario_fichaje: string | null;
+  operario_desmontaje: string | null;
 }
 
 interface Resumen {
@@ -601,6 +602,7 @@ export default function StockPage() {
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Imagen</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Entrada</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Fichada por</th>
+                          <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Operario</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Ref ID</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Artículo</th>
                           <th className="px-4 py-3 text-left text-xs font-semibold text-gray-600 uppercase">OEM</th>
@@ -645,6 +647,15 @@ export default function StockPage() {
                               {pieza.usuario_fichaje ? (
                                 <span className="bg-indigo-100 text-indigo-700 px-2 py-1 rounded-full font-medium truncate max-w-[100px] inline-block" title={pieza.usuario_fichaje}>
                                   {pieza.usuario_fichaje}
+                                </span>
+                              ) : (
+                                <span className="text-gray-400">-</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-xs text-gray-600">
+                              {pieza.operario_desmontaje ? (
+                                <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-medium truncate max-w-[100px] inline-block" title={pieza.operario_desmontaje}>
+                                  {pieza.operario_desmontaje}
                                 </span>
                               ) : (
                                 <span className="text-gray-400">-</span>
@@ -898,6 +909,21 @@ export default function StockPage() {
                         {new Date(piezaDetalle.fecha_fichaje).toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                       </p>
                     )}
+                  </div>
+                </div>
+              )}
+
+              {/* Operario de desmontaje */}
+              {piezaDetalle.operario_desmontaje && (
+                <div className="mb-6">
+                  <div className="bg-orange-50 rounded-xl p-4">
+                    <p className="text-xs text-orange-600 font-medium mb-1 flex items-center gap-1">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.049.58.025 1.192-.14 1.743" />
+                      </svg>
+                      Operario de desmontaje
+                    </p>
+                    <p className="text-sm font-semibold text-orange-800">{piezaDetalle.operario_desmontaje}</p>
                   </div>
                 </div>
               )}

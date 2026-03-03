@@ -11,6 +11,7 @@ from datetime import datetime
 from app.database import get_db
 from app.dependencies import get_current_user
 from app.models.busqueda import Ticket, TicketMensaje, Usuario, EntornoTrabajo
+from utils.timezone import now_spain_naive
 
 router = APIRouter(tags=["tickets"])
 
@@ -170,6 +171,9 @@ async def enviar_mensaje(
     # Si es sysowner respondiendo, cambiar estado a en_proceso si estaba abierto
     if es_soporte and ticket.estado == "abierto":
         ticket.estado = "en_proceso"
+    
+    # Siempre actualizar fecha para que el ticket suba en la lista
+    ticket.fecha_actualizacion = now_spain_naive()
     
     db.commit()
     db.refresh(nuevo_mensaje)

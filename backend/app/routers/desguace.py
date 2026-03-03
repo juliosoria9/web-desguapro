@@ -411,6 +411,7 @@ async def subir_base_desguace(
                     archivo_origen=archivo_origen,
                     fecha_fichaje=pieza.fecha_fichaje,
                     usuario_fichaje_id=pieza.usuario_fichaje_id,
+                    operario_desmontaje=pieza.operario_desmontaje,
                 )
                 db.add(pieza_vendida)
                 piezas_vendidas_count += 1
@@ -926,6 +927,7 @@ async def obtener_ventas(
                 "archivo_origen": v.archivo_origen,
                 "fecha_fichaje": v.fecha_fichaje.isoformat() if v.fecha_fichaje else None,
                 "usuario_fichaje": usuarios_fichaje.get(v.usuario_fichaje_id) if v.usuario_fichaje_id else None,
+                "operario_desmontaje": v.operario_desmontaje,
                 "dias_rotacion": dias_rotacion,
             })
         
@@ -1152,6 +1154,7 @@ async def obtener_stock(
                 "fecha_creacion": p.fecha_creacion.isoformat() if p.fecha_creacion else None,
                 "fecha_fichaje": p.fecha_fichaje.isoformat() if p.fecha_fichaje else None,
                 "usuario_fichaje": usuarios_fichaje.get(p.usuario_fichaje_id) if p.usuario_fichaje_id else None,
+                "operario_desmontaje": p.operario_desmontaje,
             })
         
         return {

@@ -25,6 +25,7 @@ interface EntornoTrabajo {
   modulo_oem_equivalentes: boolean;
   modulo_catalogo_vehiculos: boolean;
   modulo_venta_comercial: boolean;
+  modulo_despiece: boolean;
 }
 
 interface ModuloConfig {
@@ -47,6 +48,7 @@ const MODULOS_DISPONIBLES: ModuloConfig[] = [
   { key: 'modulo_oem_equivalentes', label: 'OEM Equivalentes', descripcion: 'Búsqueda OEM equivalentes (eBay)' },
   { key: 'modulo_catalogo_vehiculos', label: 'Catálogo Vehículos', descripcion: 'Catálogo de marcas, modelos y precios' },
   { key: 'modulo_venta_comercial', label: 'Venta', descripcion: 'Clientes interesados y buscar piezas' },
+  { key: 'modulo_despiece', label: 'Despiece', descripcion: 'Despiece de piezas por usuario' },
 ];
 
 export default function EnvironmentsAdminPage() {

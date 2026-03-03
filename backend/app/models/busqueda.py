@@ -68,6 +68,7 @@ class EntornoTrabajo(Base):
     modulo_oem_equivalentes = Column(Boolean, default=True)  # OEM equivalentes (eBay)
     modulo_catalogo_vehiculos = Column(Boolean, default=True)  # Catálogo de vehículos
     modulo_venta_comercial = Column(Boolean, default=True)  # Venta: clientes interesados
+    modulo_despiece = Column(Boolean, default=True)  # Despiece de piezas
     
     # Relaciones
     usuarios = relationship("Usuario", back_populates="entorno_trabajo", foreign_keys="Usuario.entorno_trabajo_id")
@@ -190,6 +191,9 @@ class PiezaDesguace(Base):
     fecha_fichaje = Column(DateTime, nullable=True)  # Fecha cuando alguien fichó la pieza
     usuario_fichaje_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)  # Usuario que fichó
     
+    # Operario de desmontaje
+    operario_desmontaje = Column(String(100), nullable=True)  # Nombre del operario que desmontó la pieza
+    
     fecha_creacion = Column(DateTime, default=now_spain_naive)  # Hora de España
     
     # Relaciones
@@ -221,6 +225,9 @@ class PiezaVendida(Base):
     # Información de fichaje (copiada de cuando se vendió)
     fecha_fichaje = Column(DateTime, nullable=True)  # Fecha cuando se fichó la pieza
     usuario_fichaje_id = Column(Integer, ForeignKey("usuarios.id"), nullable=True)  # Usuario que fichó
+    
+    # Operario de desmontaje (copiado de cuando se vendió)
+    operario_desmontaje = Column(String(100), nullable=True)
     
     # Información de la venta
     fecha_venta = Column(DateTime, default=now_spain_naive)  # Hora de España - Fecha en que se detectó la venta
@@ -324,6 +331,32 @@ class VerificacionFichada(Base):
     
     # Relaciones
     fichada = relationship("FichadaPieza", back_populates="verificaciones")
+    usuario = relationship("Usuario")
+    entorno_trabajo = relationship("EntornoTrabajo")
+
+
+# ============== DESPIECE DE PIEZAS ==============
+class DespiececPieza(Base):
+    """Modelo para registrar piezas despiezadas por usuario"""
+    __tablename__ = "despiece_piezas"
+    __table_args__ = (
+        Index('ix_despiece_usuario_fecha', 'usuario_id', 'fecha_registro'),
+        Index('ix_despiece_entorno_fecha', 'entorno_trabajo_id', 'fecha_registro'),
+        Index('ix_despiece_id_pieza', 'id_pieza'),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    usuario_id = Column(Integer, ForeignKey("usuarios.id", ondelete="CASCADE"))
+    entorno_trabajo_id = Column(Integer, ForeignKey("entornos_trabajo.id", ondelete="CASCADE"))
+
+    id_pieza = Column(String(100), nullable=False)  # ID de la pieza despiezada
+    descripcion = Column(String(500), nullable=True)  # Descripción opcional
+    comentario = Column(String(500), nullable=True)  # Comentario adicional
+    en_stock = Column(Boolean, default=False)  # True si la pieza entró en la BD
+
+    fecha_registro = Column(DateTime, default=now_spain_naive)
+
+    # Relaciones
     usuario = relationship("Usuario")
     entorno_trabajo = relationship("EntornoTrabajo")
 

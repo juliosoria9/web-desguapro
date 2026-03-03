@@ -25,6 +25,7 @@ interface PiezaVendida {
   archivo_origen: string | null;
   fecha_fichaje: string | null;
   usuario_fichaje: string | null;
+  operario_desmontaje: string | null;
   dias_rotacion: number | null;
 }
 
@@ -716,6 +717,7 @@ function VentasContent() {
                         <th className="w-64 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Artículo</th>
                         <th className="w-40 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">OEM</th>
                         <th className="w-32 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Marca/Modelo</th>
+                        <th className="w-24 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Operario</th>
                         <th className="w-20 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">Precio</th>
                         <th className="w-20 px-3 py-3 text-left text-xs font-semibold text-gray-600 uppercase">
                           <div className="flex items-center gap-1">
@@ -793,6 +795,15 @@ function VentasContent() {
                           <td className="px-3 py-3 text-sm text-gray-600">
                             <div className="truncate" title={venta.marca || ''}>{venta.marca || '-'}</div>
                             <div className="text-xs text-gray-400 truncate" title={venta.modelo || ''}>{venta.modelo || ''}</div>
+                          </td>
+                          <td className="px-3 py-3 text-xs text-gray-600">
+                            {venta.operario_desmontaje ? (
+                              <span className="bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-medium truncate max-w-[100px] inline-block" title={venta.operario_desmontaje}>
+                                {venta.operario_desmontaje}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400">-</span>
+                            )}
                           </td>
                           <td className="px-3 py-3">
                             <span className="text-sm font-bold text-green-600">
@@ -1110,6 +1121,18 @@ function VentasContent() {
                     <p className="text-xs text-blue-600 mt-1">Por: {ventaDetalle.usuario_fichaje}</p>
                   )}
                 </div>
+
+                {ventaDetalle.operario_desmontaje && (
+                  <div className="bg-orange-50 rounded-xl p-4">
+                    <p className="text-xs text-orange-600 font-medium mb-1 flex items-center gap-1">
+                      <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-3.5 h-3.5">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M11.42 15.17 17.25 21A2.652 2.652 0 0 0 21 17.25l-5.877-5.877M11.42 15.17l2.496-3.03c.317-.384.74-.626 1.208-.766M11.42 15.17l-4.655 5.653a2.548 2.548 0 1 1-3.586-3.586l6.837-5.63m5.108-.233c.55-.164 1.163-.188 1.743-.14a4.5 4.5 0 0 0 4.486-6.336l-3.276 3.277a3.004 3.004 0 0 1-2.25-2.25l3.276-3.276a4.5 4.5 0 0 0-6.336 4.486c.049.58.025 1.192-.14 1.743" />
+                      </svg>
+                      Operario de desmontaje
+                    </p>
+                    <p className="text-sm font-semibold text-orange-800">{ventaDetalle.operario_desmontaje}</p>
+                  </div>
+                )}
               </div>
 
               {/* Información adicional */}

@@ -82,6 +82,7 @@ class EntornoModulosUpdate(BaseModel):
     modulo_oem_equivalentes: Optional[bool] = None
     modulo_catalogo_vehiculos: Optional[bool] = None
     modulo_venta_comercial: Optional[bool] = None
+    modulo_despiece: Optional[bool] = None
 
 
 class EntornoTrabajoResponse(BaseModel):
@@ -105,7 +106,8 @@ class EntornoTrabajoResponse(BaseModel):
     modulo_oem_equivalentes: bool = True
     modulo_catalogo_vehiculos: bool = True
     modulo_venta_comercial: bool = True
-    
+    modulo_despiece: bool = True
+
     class Config:
         from_attributes = True
 

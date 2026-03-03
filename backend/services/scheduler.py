@@ -56,7 +56,11 @@ def iniciar_scheduler():
         return
     
     # Importar aquí para evitar imports circulares
-    from services.csv_auto_import import ejecutar_importacion_programada, ejecutar_limpieza_ventas_programada
+    from services.csv_auto_import import (
+        ejecutar_importacion_programada,
+        ejecutar_limpieza_ventas_programada,
+        ejecutar_stockeo_automatico_programado,
+    )
     
     # Programar backup diario a las 3:00 AM
     scheduler.add_job(
@@ -76,6 +80,15 @@ def iniciar_scheduler():
         replace_existing=True
     )
     
+    # Programar stockeo automático para TODAS las empresas con config activa (cada 30 min)
+    scheduler.add_job(
+        ejecutar_stockeo_automatico_programado,
+        IntervalTrigger(minutes=30),  # Cada 30 minutos
+        id="stockeo_automatico_empresas",
+        name="Stockeo automático todas las empresas",
+        replace_existing=True
+    )
+    
     # Programar limpieza de ventas falsas cada 6 horas
     scheduler.add_job(
         ejecutar_limpieza_ventas_programada,
@@ -85,18 +98,11 @@ def iniciar_scheduler():
         replace_existing=True
     )
     
-    # También hacer un backup al iniciar (si no hay uno reciente)
-    # scheduler.add_job(
-    #     ejecutar_backup_programado,
-    #     'date',  # Una sola vez
-    #     run_date=datetime.now(),
-    #     id="backup_inicial"
-    # )
-    
     scheduler.start()
     logger.info("Scheduler iniciado:")
     logger.info("  - Backup programado diariamente a las 3:00 AM")
     logger.info("  - Importación CSV MotoCoche cada 30 minutos")
+    logger.info("  - Stockeo automático todas las empresas cada 30 minutos")
     logger.info("  - Limpieza de ventas falsas cada 6 horas")
     
     # Listar jobs activos
@@ -140,6 +146,13 @@ def forzar_importacion_csv_ahora():
     from services.csv_auto_import import ejecutar_importacion_programada
     logger.info("Ejecutando importación CSV forzada...")
     return ejecutar_importacion_programada()
+
+
+def forzar_stockeo_automatico_ahora():
+    """Ejecutar stockeo automático de todas las empresas inmediatamente"""
+    from services.csv_auto_import import ejecutar_stockeo_automatico
+    logger.info("Ejecutando stockeo automático forzado...")
+    return ejecutar_stockeo_automatico()
 
 
 def forzar_limpieza_ventas_ahora():

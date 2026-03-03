@@ -16,7 +16,7 @@ from typing import Optional, Dict, Tuple
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 from app.database import SessionLocal
-from app.models.busqueda import BaseDesguace, PiezaDesguace, PiezaVendida, EntornoTrabajo, PiezaPedida, FichadaPieza
+from app.models.busqueda import BaseDesguace, PiezaDesguace, PiezaVendida, EntornoTrabajo, PiezaPedida, FichadaPieza, ConfiguracionStockeo
 from utils.timezone import now_spain_naive
 
 # Configurar logging
@@ -282,6 +282,7 @@ def detectar_piezas_vendidas(
                     fecha_venta=now_spain_naive(),
                     fecha_fichaje=pieza.fecha_fichaje if hasattr(pieza, 'fecha_fichaje') else None,
                     usuario_fichaje_id=pieza.usuario_fichaje_id if hasattr(pieza, 'usuario_fichaje_id') else None,
+                    operario_desmontaje=pieza.operario_desmontaje if hasattr(pieza, 'operario_desmontaje') else None,
                 )
                 db.add(vendida)
                 contador_vendidas += 1
@@ -814,6 +815,95 @@ def ejecutar_limpieza_ventas_programada():
         logger.error(f"[{datetime.now()}] Error en limpieza programada: {resultado.get('error')}")
     
     return resultado
+
+
+def ejecutar_stockeo_automatico():
+    """
+    Ejecuta la importación automática para TODOS los entornos con
+    ConfiguracionStockeo activa. Se llama desde el scheduler.
+    """
+    import json
+    logger.info(f"[{datetime.now()}] Ejecutando stockeo automático para todas las empresas...")
+
+    db = SessionLocal()
+    resultados = []
+    try:
+        configs = db.query(ConfiguracionStockeo).filter(
+            ConfiguracionStockeo.activo == True
+        ).all()
+
+        if not configs:
+            logger.info("No hay configuraciones de stockeo activas.")
+            return resultados
+
+        logger.info(f"Configuraciones activas encontradas: {len(configs)}")
+
+        for config in configs:
+            entorno = db.query(EntornoTrabajo).filter(
+                EntornoTrabajo.id == config.entorno_trabajo_id
+            ).first()
+            nombre = entorno.nombre if entorno else f"ID {config.entorno_trabajo_id}"
+
+            if not config.ruta_csv:
+                logger.warning(f"  [{nombre}] Sin ruta CSV configurada, saltando.")
+                continue
+
+            if not config.mapeo_columnas:
+                logger.warning(f"  [{nombre}] Sin mapeo de columnas configurado, saltando.")
+                continue
+
+            try:
+                mapeo = json.loads(config.mapeo_columnas)
+            except Exception:
+                logger.error(f"  [{nombre}] Error parseando mapeo de columnas, saltando.")
+                continue
+
+            logger.info(f"  [{nombre}] Importando desde {config.ruta_csv}...")
+
+            resultado = importar_csv_con_configuracion(
+                entorno_trabajo_id=config.entorno_trabajo_id,
+                csv_path=config.ruta_csv,
+                mapeo_columnas=mapeo,
+                encoding=config.encoding or 'utf-8-sig',
+                delimitador=config.delimitador or ';'
+            )
+
+            # Actualizar metadatos de la configuración
+            config.ultima_ejecucion = now_spain_naive()
+            if resultado["success"]:
+                config.ultimo_resultado = (
+                    f"OK: {resultado.get('piezas_importadas', 0)} nuevas, "
+                    f"{resultado.get('piezas_actualizadas', 0)} actualizadas, "
+                    f"{resultado.get('piezas_vendidas', 0)} vendidas"
+                )
+                config.piezas_importadas = resultado.get("piezas_importadas", 0)
+                config.ventas_detectadas = resultado.get("piezas_vendidas", 0)
+                logger.info(f"  [{nombre}] Importación exitosa: {config.ultimo_resultado}")
+            else:
+                config.ultimo_resultado = f"ERROR: {resultado.get('error', 'desconocido')}"
+                logger.error(f"  [{nombre}] {config.ultimo_resultado}")
+
+            resultados.append({"entorno": nombre, **resultado})
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error en stockeo automático: {e}", exc_info=True)
+    finally:
+        db.close()
+
+    logger.info(f"[{datetime.now()}] Stockeo automático finalizado. Empresas procesadas: {len(resultados)}")
+    return resultados
+
+
+def ejecutar_stockeo_automatico_programado():
+    """
+    Wrapper para el scheduler. Se llama cada 30 minutos.
+    """
+    logger.info(f"[{datetime.now()}] Ejecutando stockeo automático programado...")
+    resultados = ejecutar_stockeo_automatico()
+    logger.info(f"[{datetime.now()}] Stockeo automático programado finalizado: {len(resultados)} empresas")
+    return resultados
 
 
 # Para testing manual

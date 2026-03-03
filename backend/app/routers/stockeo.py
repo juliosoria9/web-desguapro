@@ -481,3 +481,19 @@ def eliminar_configuracion(
     db.commit()
     
     return {"mensaje": "Configuración eliminada correctamente"}
+
+
+@router.post("/ejecutar-todos")
+def ejecutar_todos_stockeos(
+    current_user: Usuario = Depends(get_current_user)
+):
+    """Ejecutar stockeo automático para todas las empresas con config activa"""
+    verificar_sysowner(current_user)
+
+    from services.csv_auto_import import ejecutar_stockeo_automatico
+    resultados = ejecutar_stockeo_automatico()
+
+    return {
+        "mensaje": f"Stockeo ejecutado para {len(resultados)} empresas",
+        "resultados": resultados
+    }
