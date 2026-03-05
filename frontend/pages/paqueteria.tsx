@@ -418,12 +418,18 @@ function PaqueteriaContent() {
     }
   }, [mounted, fechaFiltro, user, selectedEmpresa, sucursalSeleccionada, sucursalCargada]);
 
-  // Focus automático en pieza al montar
+  // Focus automático según fase: pieza activa → caja, si no → pieza
+  // Se ejecuta DESPUÉS del render, cuando el input destino ya está habilitado
   useEffect(() => {
-    if (mounted) {
-      setTimeout(() => inputPiezaRef.current?.focus(), 200);
-    }
-  }, [mounted]);
+    const timer = setTimeout(() => {
+      if (piezaActiva) {
+        inputCajaRef.current?.focus();
+      } else {
+        inputPiezaRef.current?.focus();
+      }
+    }, 50);
+    return () => clearTimeout(timer);
+  }, [piezaActiva, mounted]);
 
   // Cargar tipos de caja cuando se activa la pestaña
   useEffect(() => {
@@ -673,7 +679,7 @@ function PaqueteriaContent() {
     setPiezaActiva(false);
     setCajasAsociadas(0);
     setGrupoPaqueteActual('');
-    inputPiezaRef.current?.focus();
+    // focus se maneja automáticamente por el useEffect de piezaActiva
   };
 
   const quitarPieza = (idx: number) => {
@@ -684,14 +690,14 @@ function PaqueteriaContent() {
     if (e.key === 'Enter') {
       e.preventDefault();
       const val = idPiezaInput.trim().toUpperCase();
-      // 0000 = pasar a fase cajas
-      if (/^0+$/.test(val)) {
+      // 0000 = pasar a fase cajas (exactamente 4 ceros)
+      if (val === '0000') {
         if (piezasList.length > 0) {
           setPiezaActiva(true);
           setGrupoPaqueteActual(generarGrupo());
           setIdPiezaInput('');
           setCajasAsociadas(0);
-          inputCajaRef.current?.focus();
+          // focus se maneja automáticamente por el useEffect de piezaActiva
         } else {
           toast.error('Escanea al menos una pieza');
           setIdPiezaInput('');
@@ -723,8 +729,8 @@ function PaqueteriaContent() {
     if (e.key === 'Enter') {
       e.preventDefault();
       const val = idCaja.trim();
-      // Detectar código terminador: cualquier cadena de solo ceros (0000, 00000, etc.)
-      if (/^0+$/.test(val)) {
+      // Detectar código terminador: exactamente 0000
+      if (val === '0000') {
         if (cajasAsociadas > 0) {
           toast.success(`✅ ${piezasList.length} pieza${piezasList.length > 1 ? 's' : ''}: ${cajasAsociadas} caja${cajasAsociadas > 1 ? 's' : ''} asociada${cajasAsociadas > 1 ? 's' : ''}`, { duration: 3000 });
         }
@@ -766,7 +772,7 @@ function PaqueteriaContent() {
       if (esAdmin && mostrarTodos) cargarTodosRegistros();
       if (usuarioSeleccionado) verDetalleUsuario(usuarioSeleccionado);
       // Seguir en campo caja
-      inputCajaRef.current?.focus();
+      setTimeout(() => inputCajaRef.current?.focus(), 50);
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Error al registrar');
     } finally {
@@ -2208,8 +2214,8 @@ function PaqueteriaContent() {
                             </div>
                           )}
 
-                          {/* Acciones rápidas: añadir/consumir (solo admin, no en vista General) */}
-                          {esAdmin && !esVistaGeneral && (
+                          {/* Acciones rápidas: añadir/consumir (todos los usuarios, no en vista General) */}
+                          {!esVistaGeneral && (
                           <div className="mt-3 pt-3 border-t border-gray-200 flex flex-wrap items-center gap-3">
                             {/* Entrada de stock */}
                             <div className="flex items-center gap-1">

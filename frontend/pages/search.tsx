@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { useRouter } from 'next/router';
 import { useAuthStore } from '@/lib/auth-store';
 import axios from 'axios';
@@ -81,14 +81,13 @@ interface SearchResult {
 }
 
 const PLATAFORMAS_DISPONIBLES = [
-  { id: 'todas', nombre: '⊕ Todas (progresivo)' },
   { id: 'ecooparts', nombre: 'Ecooparts' },
   { id: 'recambioverde', nombre: 'Recambio Verde' },
   { id: 'opisto', nombre: 'Opisto' },
   { id: 'ebay', nombre: 'eBay' },
-  { id: 'ovoko', nombre: 'Ovoko (~10s)' },
-  { id: 'partsss', nombre: 'Partsss (motos piezas nuevas)' },
-  { id: 'motomine', nombre: 'Motomine (motos UK)' },
+  { id: 'ovoko', nombre: 'Ovoko (~10s)', lenta: true },
+  { id: 'partsss', nombre: 'Partsss (motos)', lenta: false },
+  { id: 'motomine', nombre: 'Motomine (UK)', lenta: false },
 ];
 
 // Función para formatear tiempo relativo
@@ -120,7 +119,9 @@ export default function SearchPage() {
   const { user, logout, loadFromStorage } = useAuthStore();
   const [mounted, setMounted] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [plataforma, setPlataforma] = useState('todas');
+  const [plataformasSeleccionadas, setPlataformasSeleccionadas] = useState<Set<string>>(new Set(PLATAFORMAS_DISPONIBLES.map(p => p.id)));
+  const [showPlataformaDropdown, setShowPlataformaDropdown] = useState(false);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const [cantidadPiezas, setCantidadPiezas] = useState(20);
   const [result, setResult] = useState<SearchResult | null>(null);
   const [loading, setLoading] = useState(false);
@@ -140,6 +141,43 @@ export default function SearchPage() {
     loadFromStorage();
     setMounted(true);
   }, [loadFromStorage]);
+
+  // Cerrar dropdown al hacer clic fuera
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(e.target as Node)) {
+        setShowPlataformaDropdown(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const togglePlataforma = (id: string) => {
+    setPlataformasSeleccionadas(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  };
+
+  const seleccionarTodas = () => {
+    setPlataformasSeleccionadas(new Set(PLATAFORMAS_DISPONIBLES.map(p => p.id)));
+  };
+
+  const deseleccionarTodas = () => {
+    setPlataformasSeleccionadas(new Set());
+  };
+
+  const plataformaLabel = plataformasSeleccionadas.size === PLATAFORMAS_DISPONIBLES.length
+    ? 'Todas'
+    : plataformasSeleccionadas.size === 0
+      ? 'Ninguna'
+      : `${plataformasSeleccionadas.size} selec.`;
 
   if (!mounted || !user) {
     return (
@@ -166,51 +204,71 @@ export default function SearchPage() {
     try {
       const ref = searchTerm.trim();
       
-      if (plataforma === 'todas') {
-        // Búsqueda progresiva: primero rápidas, luego lentas en paralelo
-        
-        // 1. Buscar en plataformas rápidas
+      const seleccionadas = Array.from(plataformasSeleccionadas);
+      if (seleccionadas.length === 0) {
+        toast.error('Selecciona al menos una plataforma');
+        setLoading(false);
+        return;
+      }
+
+      // Separar rápidas y lentas de la selección
+      const rapidas = seleccionadas.filter(id => !PLATAFORMAS_DISPONIBLES.find(p => p.id === id)?.lenta);
+      const lentas = seleccionadas.filter(id => PLATAFORMAS_DISPONIBLES.find(p => p.id === id)?.lenta);
+
+      if (rapidas.length > 0) {
+        // 1. Buscar en las plataformas rápidas seleccionadas
+        const plataformaParam = rapidas.length === 1 ? rapidas[0] : rapidas.join(',');
         const responseRapidas = await axios.post(
           `${process.env.NEXT_PUBLIC_API_URL}/api/v1/precios/buscar`,
-          { 
+          {
             referencia: ref,
-            plataforma: 'todas',
+            plataforma: plataformaParam,
             cantidad: cantidadPiezas,
             incluir_bparts: false,
             incluir_ovoko: false
           },
           { withCredentials: true }
         );
-        
+
         setResult(responseRapidas.data);
         setLoading(false);
-        toast.success(`Rápidas: ${responseRapidas.data.precios?.length || 0} precios`);
-        
-        // 2. Buscar en plataformas lentas en paralelo (background)
+        toast.success(`${responseRapidas.data.precios?.length || 0} precios encontrados`);
+      } else {
+        setLoading(false);
+      }
+
+      // 2. Buscar lentas en paralelo (background)
+      if (lentas.length > 0) {
         setLoadingLentas(true);
-        
+
         const buscarLentas = async () => {
-          const resultadosLentos: any[] = [];
-          
-          // Buscar Ovoko en paralelo
-          const promesas = [
+          const promesas = lentas.map(pid =>
             axios.post(
               `${process.env.NEXT_PUBLIC_API_URL}/api/v1/precios/buscar`,
-              { referencia: ref, plataforma: 'ovoko', cantidad: cantidadPiezas, incluir_bparts: false, incluir_ovoko: false },
+              { referencia: ref, plataforma: pid, cantidad: cantidadPiezas, incluir_bparts: false, incluir_ovoko: false },
               { withCredentials: true }
-            ).catch(e => ({ data: null, error: 'ovoko' }))
-          ];
-          
+            ).catch(() => ({ data: null }))
+          );
+
           const resultados = await Promise.all(promesas);
-          
-          // Combinar resultados
+
           setResult(prev => {
-            if (!prev) return prev;
-            
-            let nuevosPrecios = [...(prev.precios || [])];
-            let nuevasImagenes = [...(prev.imagenes || [])];
-            let nuevosResultados = [...(prev.resultados_por_plataforma || [])];
-            
+            // Si no hubo resultado rápido, construir uno base con la primera lenta
+            const base = prev || {
+              referencia: ref,
+              plataforma: 'multi',
+              precios: [],
+              resumen: { media: 0, mediana: 0, minimo: 0, maximo: 0, desviacion_estandar: 0, cantidad_precios: 0, outliers_removidos: 0 },
+              imagenes: [],
+              resultados_por_plataforma: [],
+              plataformas_consultadas: 0,
+              plataformas_con_resultados: 0,
+            } as SearchResult;
+
+            let nuevosPrecios = [...(base.precios || [])];
+            let nuevasImagenes = [...(base.imagenes || [])];
+            let nuevosResultados = [...(base.resultados_por_plataforma || [])];
+
             resultados.forEach((res: any) => {
               if (res.data && res.data.precios) {
                 nuevosPrecios = [...nuevosPrecios, ...res.data.precios];
@@ -220,67 +278,48 @@ export default function SearchPage() {
                 }
               }
             });
-            
-            // Recalcular estadísticas
+
             const preciosLimpios = nuevosPrecios.filter(p => p > 0);
-            const media = preciosLimpios.length > 0 
-              ? preciosLimpios.reduce((a, b) => a + b, 0) / preciosLimpios.length 
+            const media = preciosLimpios.length > 0
+              ? preciosLimpios.reduce((a, b) => a + b, 0) / preciosLimpios.length
               : 0;
             const sorted = [...preciosLimpios].sort((a, b) => a - b);
-            const mediana = sorted.length > 0 
-              ? sorted[Math.floor(sorted.length / 2)] 
+            const mediana = sorted.length > 0
+              ? sorted[Math.floor(sorted.length / 2)]
               : 0;
-            
+
             return {
-              ...prev,
+              ...base,
               precios: nuevosPrecios,
               imagenes: [...new Set(nuevasImagenes)],
               resultados_por_plataforma: nuevosResultados,
               resumen: {
-                ...prev.resumen,
+                ...base.resumen,
                 media: Math.round(media * 100) / 100,
                 mediana: Math.round(mediana * 100) / 100,
-                minimo: Math.min(...preciosLimpios) || 0,
-                maximo: Math.max(...preciosLimpios) || 0,
+                minimo: preciosLimpios.length ? Math.min(...preciosLimpios) : 0,
+                maximo: preciosLimpios.length ? Math.max(...preciosLimpios) : 0,
                 cantidad_precios: preciosLimpios.length
               },
-              plataformas_consultadas: (prev.plataformas_consultadas || 3) + 1,
+              plataformas_consultadas: nuevosResultados.length,
               plataformas_con_resultados: nuevosResultados.filter(r => r.cantidad_precios > 0).length
             };
           });
-          
-          const lentosConPrecios = resultados.filter((r: any) => r.data?.precios?.length > 0).length;
-          if (lentosConPrecios > 0) {
-            toast.success(`+${resultados.reduce((acc: number, r: any) => acc + (r.data?.precios?.length || 0), 0)} precios de Ovoko`);
+
+          const total = resultados.reduce((acc: number, r: any) => acc + (r.data?.precios?.length || 0), 0);
+          if (total > 0) {
+            toast.success(`+${total} precios de plataformas lentas`);
           }
-          
           setLoadingLentas(false);
         };
-        
+
         buscarLentas();
-        
-      } else {
-        // Búsqueda en una sola plataforma
-        const response = await axios.post(
-          `${process.env.NEXT_PUBLIC_API_URL}/api/v1/precios/buscar`,
-          { 
-            referencia: ref,
-            plataforma: plataforma,
-            cantidad: cantidadPiezas,
-            incluir_bparts: false,
-            incluir_ovoko: false
-          },
-          { withCredentials: true }
-        );
-        setResult(response.data);
-        toast.success(`Se encontraron ${response.data.precios?.length || 0} precios`);
-        setLoading(false);
       }
     } catch (error: any) {
       console.error('Error en búsqueda:', error);
       const errorMsg = error.response?.data?.detail || 'Error en la búsqueda';
       if (error.response?.status === 404) {
-        toast.error(`No se encontraron precios para "${searchTerm}" en ${plataforma}`);
+        toast.error(`No se encontraron precios para "${searchTerm}"`);
       } else if (error.response?.status === 400) {
         toast.error(errorMsg);
       } else {
@@ -392,19 +431,42 @@ export default function SearchPage() {
                 />
               </div>
 
-              <div className="w-36">
-                <label className="block text-xs font-medium text-gray-700 mb-1">Plataforma</label>
-                <select
-                  value={plataforma}
-                  onChange={(e) => setPlataforma(e.target.value)}
-                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm"
+              <div className="w-44 relative" ref={dropdownRef}>
+                <label className="block text-xs font-medium text-gray-700 mb-1">Plataformas</label>
+                <button
+                  type="button"
+                  onClick={() => setShowPlataformaDropdown(!showPlataformaDropdown)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-600 text-sm text-left flex items-center justify-between bg-white"
                 >
-                  {PLATAFORMAS_DISPONIBLES.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.nombre}
-                    </option>
-                  ))}
-                </select>
+                  <span className="truncate">{plataformaLabel}</span>
+                  <svg className={`w-4 h-4 ml-1 transition-transform ${showPlataformaDropdown ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+                {showPlataformaDropdown && (
+                  <div className="absolute z-50 mt-1 w-56 bg-white border border-gray-200 rounded-lg shadow-xl py-1 max-h-64 overflow-y-auto">
+                    <div className="flex gap-1 px-2 py-1 border-b border-gray-100">
+                      <button type="button" onClick={seleccionarTodas} className="text-xs text-blue-600 hover:underline">Todas</button>
+                      <span className="text-gray-300">|</span>
+                      <button type="button" onClick={deseleccionarTodas} className="text-xs text-red-600 hover:underline">Ninguna</button>
+                    </div>
+                    {PLATAFORMAS_DISPONIBLES.map((p) => (
+                      <label
+                        key={p.id}
+                        className="flex items-center gap-2 px-3 py-1.5 hover:bg-gray-50 cursor-pointer text-sm"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={plataformasSeleccionadas.has(p.id)}
+                          onChange={() => togglePlataforma(p.id)}
+                          className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                        />
+                        <span>{p.nombre}</span>
+                        {p.lenta && <span className="text-[10px] text-orange-500 ml-auto">lenta</span>}
+                      </label>
+                    ))}
+                  </div>
+                )}
               </div>
 
               <div className="w-32">
@@ -434,7 +496,7 @@ export default function SearchPage() {
               {loadingLentas && (
                 <div className="flex items-center gap-2 text-xs text-orange-600 bg-orange-50 px-3 py-2 rounded-lg">
                   <div className="animate-spin w-4 h-4 border-2 border-orange-600 border-t-transparent rounded-full"></div>
-                  <span>Cargando Ovoko...</span>
+                  <span>Cargando lentas...</span>
                 </div>
               )}
 

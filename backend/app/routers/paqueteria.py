@@ -995,8 +995,9 @@ async def registrar_movimiento_caja(
     """Registrar un movimiento de stock (entrada, consumo o ajuste manual)"""
     _check_paqueteria_modulo(usuario, db)
 
-    if usuario.rol not in ["admin", "owner", "sysowner"]:
-        raise HTTPException(status_code=403, detail="Solo administradores pueden gestionar stock de cajas")
+    # Usuarios normales solo pueden hacer entrada y consumo, no ajustes
+    if usuario.rol not in ["admin", "owner", "sysowner"] and datos.tipo_movimiento == "ajuste":
+        raise HTTPException(status_code=403, detail="Solo administradores pueden hacer ajustes de stock")
 
     query = db.query(TipoCaja).filter(TipoCaja.id == tipo_id)
     if usuario.rol != "sysowner":

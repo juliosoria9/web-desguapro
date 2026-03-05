@@ -113,6 +113,16 @@ async def buscar_precios(
                 plataformas_a_buscar.append("bparts")
             if request.incluir_ovoko:
                 plataformas_a_buscar.append("ovoko")
+        elif "," in request.plataforma:
+            # Multi-selección: lista separada por comas (ej: "ecooparts,ovoko,ebay")
+            seleccionadas = [p.strip() for p in request.plataforma.split(",") if p.strip()]
+            invalidas = [p for p in seleccionadas if p not in todas_plataformas]
+            if invalidas:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Plataformas no válidas: {invalidas}. Disponibles: {todas_plataformas}"
+                )
+            plataformas_a_buscar = seleccionadas
         else:
             if request.plataforma not in todas_plataformas:
                 raise HTTPException(
