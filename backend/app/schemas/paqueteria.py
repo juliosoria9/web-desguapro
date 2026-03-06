@@ -152,7 +152,7 @@ class TipoCajaResponse(BaseModel):
 class MovimientoCajaCreate(BaseModel):
     """Request para registrar un movimiento de stock"""
     cantidad: int = Field(..., description="Positivo para entrada, negativo para consumo")
-    tipo_movimiento: str = Field(..., pattern="^(entrada|consumo|ajuste)$")
+    tipo_movimiento: str = Field(..., pattern="^(entrada|consumo|retirada|ajuste)$")
     notas: Optional[str] = None
     sucursal_id: Optional[int] = Field(None, description="Sucursal donde aplicar el movimiento")
 
@@ -190,6 +190,7 @@ class ResumenTipoCaja(BaseModel):
     stock_actual: int = 0
     total_entradas: int = 0
     total_consumidas: int = 0
+    total_retiradas: int = 0
     consumo_periodo: int = 0
     media_diaria: float = 0.0
     dias_restantes: Optional[int] = None

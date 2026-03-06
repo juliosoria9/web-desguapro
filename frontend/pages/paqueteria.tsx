@@ -75,6 +75,12 @@ const ArrowDownIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
   </svg>
 );
 
+const XMarkIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
+  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={2} stroke="currentColor" className={className}>
+    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+  </svg>
+);
+
 const ClockIcon = ({ className = "w-4 h-4" }: { className?: string }) => (
   <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className={className}>
     <path strokeLinecap="round" strokeLinejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
@@ -175,6 +181,7 @@ interface ResumenTipoCaja {
   stock_actual: number;
   total_entradas: number;
   total_consumidas: number;
+  total_retiradas: number;
   consumo_periodo: number;
   media_diaria: number;
   dias_restantes: number | null;
@@ -350,6 +357,7 @@ function PaqueteriaContent() {
   const [cargandoMovimientos, setCargandoMovimientos] = useState(false);
   const [cantidadEntrada, setCantidadEntrada] = useState<{ [tipoId: number]: string }>({});
   const [cantidadConsumo, setCantidadConsumo] = useState<{ [tipoId: number]: string }>({});
+  const [cantidadRetirada, setCantidadRetirada] = useState<{ [tipoId: number]: string }>({});
   const [notasMovimiento, setNotasMovimiento] = useState<{ [tipoId: number]: string }>({});
   const [registrandoMov, setRegistrandoMov] = useState(false);
 
@@ -1007,10 +1015,12 @@ function PaqueteriaContent() {
     }
   };
 
-  const registrarMovimiento = async (tipoId: number, tipo_movimiento: 'entrada' | 'consumo') => {
+  const registrarMovimiento = async (tipoId: number, tipo_movimiento: 'entrada' | 'consumo' | 'retirada') => {
     const cantStr = tipo_movimiento === 'entrada' 
       ? cantidadEntrada[tipoId] 
-      : cantidadConsumo[tipoId];
+      : tipo_movimiento === 'consumo'
+      ? cantidadConsumo[tipoId]
+      : cantidadRetirada[tipoId];
     const cantidad = parseInt(cantStr || '0');
     if (!cantidad || cantidad <= 0) {
       toast.error('Introduce una cantidad válida');
@@ -1031,13 +1041,17 @@ function PaqueteriaContent() {
       );
       toast.success(tipo_movimiento === 'entrada'
         ? `+${cantidad} cajas añadidas`
-        : `-${cantidad} cajas consumidas`
+        : tipo_movimiento === 'consumo'
+        ? `-${cantidad} cajas consumidas`
+        : `-${cantidad} cajas retiradas`
       );
       // Limpiar inputs
       if (tipo_movimiento === 'entrada') {
         setCantidadEntrada(prev => ({ ...prev, [tipoId]: '' }));
-      } else {
+      } else if (tipo_movimiento === 'consumo') {
         setCantidadConsumo(prev => ({ ...prev, [tipoId]: '' }));
+      } else {
+        setCantidadRetirada(prev => ({ ...prev, [tipoId]: '' }));
       }
       setNotasMovimiento(prev => ({ ...prev, [tipoId]: '' }));
       // Recargar
@@ -1047,6 +1061,24 @@ function PaqueteriaContent() {
       }
     } catch (err: any) {
       toast.error(err.response?.data?.detail || 'Error al registrar movimiento');
+    } finally {
+      setRegistrandoMov(false);
+    }
+  };
+
+  const resetearCaja = async (tipoId: number, tipoNombre: string) => {
+    if (!confirm(`¿Estás seguro de RESETEAR todos los datos de "${tipoNombre}"?\n\nSe eliminarán TODOS los movimientos y el stock quedará a 0.\nEsta acción NO se puede deshacer.`)) return;
+    setRegistrandoMov(true);
+    try {
+      await axios.delete(
+        `${process.env.NEXT_PUBLIC_API_URL}/api/v1/paqueteria/tipos-caja/${tipoId}/reset`,
+        { withCredentials: true }
+      );
+      toast.success(`Datos de "${tipoNombre}" reseteados a 0`);
+      cargarResumenCajas();
+      if (expandedTipo === tipoId) setExpandedTipo(null);
+    } catch (err: any) {
+      toast.error(err.response?.data?.detail || 'Error al resetear datos');
     } finally {
       setRegistrandoMov(false);
     }
@@ -2162,6 +2194,16 @@ function PaqueteriaContent() {
                                 <p className="text-xs text-gray-500">Consumidas</p>
                               </div>
 
+                              {/* Retiradas */}
+                              {resumen.total_retiradas > 0 && (
+                              <div className="text-center">
+                                <p className="text-xl font-bold text-red-600">
+                                  {resumen.total_retiradas}
+                                </p>
+                                <p className="text-xs text-gray-500">Retiradas</p>
+                              </div>
+                              )}
+
                               {/* Media diaria */}
                               <div className="text-center">
                                 <p className="text-lg font-bold text-purple-600">
@@ -2257,6 +2299,26 @@ function PaqueteriaContent() {
                               </button>
                             </div>
 
+                            {/* Retirada (dañadas, devueltas, etc. — no cuenta como consumo) */}
+                            <div className="flex items-center gap-1">
+                              <input
+                                type="number"
+                                min="1"
+                                placeholder="Cant."
+                                value={cantidadRetirada[resumen.id] || ''}
+                                onChange={(e) => setCantidadRetirada(prev => ({ ...prev, [resumen.id]: e.target.value }))}
+                                className="w-20 px-2 py-1.5 border border-red-300 rounded-lg text-sm text-center focus:outline-none focus:ring-2 focus:ring-red-500"
+                              />
+                              <button
+                                onClick={() => registrarMovimiento(resumen.id, 'retirada')}
+                                disabled={registrandoMov}
+                                className="px-3 py-1.5 bg-red-600 hover:bg-red-700 disabled:bg-gray-300 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-1"
+                                title="Retirar cajas sin contar como consumo (dañadas, devueltas...)"
+                              >
+                                <XMarkIcon className="w-3.5 h-3.5" /> Retirar
+                              </button>
+                            </div>
+
                             {/* Notas (opcional) */}
                             <input
                               type="text"
@@ -2268,8 +2330,18 @@ function PaqueteriaContent() {
                           </div>
                           )}
 
-                          {/* Ver historial (visible para todos) */}
-                          <div className={`${esAdmin ? '' : 'mt-3 pt-3 border-t border-gray-200'} flex justify-end ${esAdmin ? 'mt-2' : ''}`}>
+                          {/* Ver historial y resetear (visible para todos / admin) */}
+                          <div className={`${esAdmin ? '' : 'mt-3 pt-3 border-t border-gray-200'} flex justify-between items-center ${esAdmin ? 'mt-2' : ''}`}>
+                            {esAdmin ? (
+                              <button
+                                onClick={() => resetearCaja(resumen.id, resumen.tipo_nombre)}
+                                disabled={registrandoMov}
+                                className="px-3 py-1.5 bg-gray-100 hover:bg-red-100 hover:text-red-700 disabled:bg-gray-100 text-gray-500 rounded-lg text-xs font-medium transition-colors flex items-center gap-1"
+                                title="Eliminar todos los movimientos y dejar stock a 0"
+                              >
+                                <XMarkIcon className="w-3.5 h-3.5" /> Limpiar datos
+                              </button>
+                            ) : <div />}
                             <button
                               onClick={() => cargarMovimientosTipo(resumen.id)}
                               className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors flex items-center gap-1 ${
@@ -2316,15 +2388,18 @@ function PaqueteriaContent() {
                                           ? 'bg-green-100 text-green-700'
                                           : m.tipo_movimiento === 'consumo'
                                           ? 'bg-orange-100 text-orange-700'
+                                          : m.tipo_movimiento === 'retirada'
+                                          ? 'bg-red-100 text-red-700'
                                           : 'bg-gray-100 text-gray-700'
                                       }`}>
                                         {m.tipo_movimiento === 'entrada' && <ArrowUpIcon className="w-3 h-3" />}
                                         {m.tipo_movimiento === 'consumo' && <ArrowDownIcon className="w-3 h-3" />}
+                                        {m.tipo_movimiento === 'retirada' && <XMarkIcon className="w-3 h-3" />}
                                         {m.tipo_movimiento}
                                       </span>
                                     </div>
                                     <div className={`col-span-2 text-right font-bold ${
-                                      m.cantidad > 0 ? 'text-green-600' : 'text-orange-600'
+                                      m.cantidad > 0 ? 'text-green-600' : m.tipo_movimiento === 'retirada' ? 'text-red-600' : 'text-orange-600'
                                     }`}>
                                       {m.cantidad > 0 ? '+' : ''}{m.cantidad}
                                     </div>

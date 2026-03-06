@@ -1019,7 +1019,7 @@ async def registrar_movimiento_caja(
 
     # Aplicar cantidad según tipo
     cantidad = abs(datos.cantidad)
-    if datos.tipo_movimiento == "consumo":
+    if datos.tipo_movimiento in ("consumo", "retirada"):
         cantidad = -cantidad
     elif datos.tipo_movimiento == "ajuste":
         cantidad = datos.cantidad  # Puede ser positivo o negativo
@@ -1070,6 +1070,41 @@ async def registrar_movimiento_caja(
         sucursal_nombre=_sucursal_nombre(db, suc_id),
         fecha=movimiento.fecha,
     )
+
+
+@router.delete("/tipos-caja/{tipo_id}/reset")
+async def resetear_datos_caja(
+    tipo_id: int,
+    db: Session = Depends(get_db),
+    usuario: Usuario = Depends(get_current_user),
+):
+    """Eliminar todos los movimientos de un tipo de caja y resetear stock a 0"""
+    _check_paqueteria_modulo(usuario, db)
+
+    if usuario.rol not in ["admin", "owner", "sysowner"]:
+        raise HTTPException(status_code=403, detail="Solo administradores pueden resetear datos")
+
+    query = db.query(TipoCaja).filter(TipoCaja.id == tipo_id)
+    if usuario.rol != "sysowner":
+        query = query.filter(TipoCaja.entorno_trabajo_id == usuario.entorno_trabajo_id)
+    tipo = query.first()
+    if not tipo:
+        raise HTTPException(status_code=404, detail="Tipo de caja no encontrado")
+
+    # Eliminar todos los movimientos
+    eliminados = db.query(MovimientoCaja).filter(MovimientoCaja.tipo_caja_id == tipo_id).delete()
+
+    # Resetear stock global
+    tipo.stock_actual = 0
+    tipo.aviso_enviado = False
+
+    # Resetear stock por sucursal
+    db.query(StockCajaSucursal).filter(StockCajaSucursal.tipo_caja_id == tipo_id).update({"stock_actual": 0})
+
+    db.commit()
+    logger.info(f"RESET caja tipo {tipo_id} ({tipo.tipo_nombre}) por {usuario.email}: {eliminados} movimientos eliminados")
+
+    return {"detail": f"Datos reseteados: {eliminados} movimientos eliminados", "movimientos_eliminados": eliminados}
 
 
 @router.get("/tipos-caja/{tipo_id}/movimientos")
@@ -1162,22 +1197,28 @@ async def resumen_stock_cajas(
         # Total entradas históricas
         total_entradas = db.query(func.coalesce(func.sum(MovimientoCaja.cantidad), 0)).filter(
             *mov_filter,
-            MovimientoCaja.cantidad > 0,
+            MovimientoCaja.tipo_movimiento == "entrada",
         ).scalar()
 
-        # Total consumidas históricas (valor absoluto)
+        # Total consumidas históricas (valor absoluto) — solo "consumo", NO "retirada"
         total_consumidas = db.query(func.coalesce(func.sum(func.abs(MovimientoCaja.cantidad)), 0)).filter(
             *mov_filter,
-            MovimientoCaja.cantidad < 0,
+            MovimientoCaja.tipo_movimiento == "consumo",
         ).scalar()
 
-        # Consumo en período (si hay filtro)
+        # Total retiradas históricas (valor absoluto)
+        total_retiradas = db.query(func.coalesce(func.sum(func.abs(MovimientoCaja.cantidad)), 0)).filter(
+            *mov_filter,
+            MovimientoCaja.tipo_movimiento == "retirada",
+        ).scalar()
+
+        # Consumo en período (si hay filtro) — solo "consumo"
         consumo_periodo = 0
         media_diaria = 0.0
         if desde or hasta:
             q = db.query(func.coalesce(func.sum(func.abs(MovimientoCaja.cantidad)), 0)).filter(
                 *mov_filter,
-                MovimientoCaja.cantidad < 0,
+                MovimientoCaja.tipo_movimiento == "consumo",
             )
             if desde:
                 q = q.filter(func.date(MovimientoCaja.fecha) >= desde)
@@ -1195,10 +1236,10 @@ async def resumen_stock_cajas(
             except (ValueError, TypeError):
                 media_diaria = 0.0
         else:
-            # Sin filtro: calcular media desde el primer movimiento
+            # Sin filtro: calcular media desde el primer movimiento de consumo
             primer_mov = db.query(func.min(MovimientoCaja.fecha)).filter(
                 *mov_filter,
-                MovimientoCaja.cantidad < 0,
+                MovimientoCaja.tipo_movimiento == "consumo",
             ).scalar()
             if primer_mov and total_consumidas > 0:
                 dias = max((datetime.now() - primer_mov).days, 1)
@@ -1239,6 +1280,7 @@ async def resumen_stock_cajas(
             stock_actual=stock_mostrar,
             total_entradas=total_entradas,
             total_consumidas=total_consumidas,
+            total_retiradas=total_retiradas,
             consumo_periodo=consumo_periodo,
             media_diaria=media_diaria,
             dias_restantes=int(stock_mostrar / media_diaria) if media_diaria > 0 else None,
